@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Devices>
+    <!-- type="custom": this device never switches anything, so it must not be swept
+         by "all devices off", and custom keeps it clear of the reserved native
+         state names. One device per controller; a second is refused at start. -->
+    <Device type="custom" id="zwaveController">
+        <Name>Z-Wave Controller</Name>
+        <ConfigUI>
+            <Field id="lbl_what" type="label">
+                <Label>This device represents your Z-Wave USB controller (the stick Indigo talks to). It records what the controller is, when it was last backed up, and whether the network has changed since. Backups and restores run from the plugin's menu: Plugins, Z-Wave Controller Backup.</Label>
+            </Field>
+            <Field id="lbl_one" type="label">
+                <Label>One of these is all you need. Nothing to configure: save to create it.</Label>
+            </Field>
+        </ConfigUI>
+        <UiDisplayStateId>backupStatus</UiDisplayStateId>
+        <States>
+            <State id="backupStatus">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Backup status changed</TriggerLabel>
+                <ControlPageLabel>Backup status</ControlPageLabel>
+            </State>
+            <State id="actionRequired">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>Action required (switch Z-Wave off or on)</TriggerLabel>
+                <ControlPageLabel>Action required</ControlPageLabel>
+            </State>
+            <State id="networkChangedSinceBackup">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>Network changed since the last backup</TriggerLabel>
+                <ControlPageLabel>Network changed since backup</ControlPageLabel>
+            </State>
+            <State id="lastBackupOk">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>Last backup succeeded</TriggerLabel>
+                <ControlPageLabel>Last backup OK</ControlPageLabel>
+            </State>
+            <State id="lastBackupAt">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Last backup time changed</TriggerLabel>
+                <ControlPageLabel>Last backup at</ControlPageLabel>
+            </State>
+            <State id="lastBackupFile">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Last backup file changed</TriggerLabel>
+                <ControlPageLabel>Last backup file</ControlPageLabel>
+            </State>
+            <State id="lastResult">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Last operation result changed</TriggerLabel>
+                <ControlPageLabel>Last result</ControlPageLabel>
+            </State>
+            <State id="homeId">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Home ID changed</TriggerLabel>
+                <ControlPageLabel>Home ID</ControlPageLabel>
+            </State>
+            <State id="controllerModel">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Controller model changed</TriggerLabel>
+                <ControlPageLabel>Controller model</ControlPageLabel>
+            </State>
+            <State id="softwareVersion">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Controller software version changed</TriggerLabel>
+                <ControlPageLabel>Controller software</ControlPageLabel>
+            </State>
+            <State id="nodeCount">
+                <ValueType>Integer</ValueType>
+                <TriggerLabel>Node count changed</TriggerLabel>
+                <ControlPageLabel>Nodes on the controller</ControlPageLabel>
+            </State>
+            <State id="nodeIds">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Node list changed</TriggerLabel>
+                <ControlPageLabel>Node ids</ControlPageLabel>
+            </State>
+            <State id="isPrimary">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>Primary controller flag changed</TriggerLabel>
+                <ControlPageLabel>Is primary</ControlPageLabel>
+            </State>
+            <State id="isSUC">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>SUC flag changed</TriggerLabel>
+                <ControlPageLabel>Is SUC</ControlPageLabel>
+            </State>
+        </States>
+    </Device>
+</Devices>

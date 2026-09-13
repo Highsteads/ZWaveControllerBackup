@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MenuItems>
+
+    <MenuItem id="menuBackup">
+        <Name>Back Up Controller Now...</Name>
+        <CallbackMethod>menuBackup</CallbackMethod>
+        <ButtonTitle>Start</ButtonTitle>
+        <ConfigUI>
+            <Field id="lbl_how" type="label">
+                <Label>Two clicks and about two minutes. Indigo has to let go of the stick while it is read.</Label>
+            </Field>
+            <Field id="lbl_step1" type="label">
+                <Label>1. Choose Interfaces, Z-Wave, Disable in the Indigo client (before or after pressing Start, either order works).</Label>
+            </Field>
+            <Field id="lbl_step2" type="label">
+                <Label>2. Press Start. The plugin waits for Z-Wave to go off, reads the controller twice, checks the copies match, and writes the image. Watch the Event Log: it tells you when to choose Interfaces, Z-Wave, Enable again.</Label>
+            </Field>
+            <Field id="folderShown" type="textfield" readonly="true">
+                <Label>Images go to:</Label>
+            </Field>
+        </ConfigUI>
+    </MenuItem>
+
+    <MenuItem id="menuRestore">
+        <Name>Restore Controller...</Name>
+        <CallbackMethod>menuRestore</CallbackMethod>
+        <ButtonTitle>Restore</ButtonTitle>
+        <ConfigUI>
+            <Field id="lbl_warn" type="label">
+                <Label>This writes an image back into the controller's memory. It only goes onto the same model running the same software version as the stick the image came from; the plugin refuses anything else. Afterwards you unplug the stick, plug it back in, and the plugin checks the image took before telling you to switch Z-Wave back on.</Label>
+            </Field>
+            <Field id="imageFile" type="menu">
+                <Label>Image:</Label>
+                <List class="self" filter="" method="imageList"/>
+            </Field>
+            <Field id="replacementStick" type="checkbox" defaultValue="false">
+                <Label>Replacement stick</Label>
+                <Description>Tick if this image goes onto a different stick of the same model (its Home ID will differ from the image's).</Description>
+            </Field>
+            <Field id="confirmOverwrite" type="checkbox" defaultValue="false">
+                <Label>Confirm</Label>
+                <Description>I understand this overwrites the controller's memory.</Description>
+            </Field>
+            <Field id="lbl_steps" type="label">
+                <Label>Then: Interfaces, Z-Wave, Disable. The plugin does the rest and talks you through it in the Event Log.</Label>
+            </Field>
+        </ConfigUI>
+    </MenuItem>
+
+    <MenuItem id="menuVerify">
+        <Name>Verify Last Backup</Name>
+        <CallbackMethod>menuVerify</CallbackMethod>
+    </MenuItem>
+
+    <MenuItem id="sep_info" isSeparator="true"/>
+
+    <MenuItem id="showPluginInfo">
+        <Name>Show Plugin Info</Name>
+        <CallbackMethod>showPluginInfo</CallbackMethod>
+    </MenuItem>
+
+</MenuItems>

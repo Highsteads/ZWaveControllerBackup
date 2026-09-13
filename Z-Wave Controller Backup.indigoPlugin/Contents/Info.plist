@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Z-Wave Controller Backup</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.clives.indigoplugin.zwave-controller-backup</string>
+	<key>CFBundleName</key>
+	<string>ZWave Backup</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>https://github.com/Highsteads/ZWaveControllerBackup</string>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>GithubInfo</key>
+	<dict>
+		<key>GithubRepo</key>
+		<string>ZWaveControllerBackup</string>
+		<key>GithubUser</key>
+		<string>Highsteads</string>
+	</dict>
+	<key>PluginVersion</key>
+	<string>1.0.0</string>
+	<key>ServerApiVersion</key>
+	<string>3.0</string>
+</dict>
+</plist>

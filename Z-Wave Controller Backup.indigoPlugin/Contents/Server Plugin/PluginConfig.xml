@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PluginConfig>
+    <Field id="lbl_about" type="label">
+        <Label>Backs up the memory of your Z-Wave USB controller (Home ID, node table, routes) to a file, and can write it back. Backups run from the plugin menu and need Z-Wave switched off for about two minutes: the plugin waits for you to do that and tells you when to switch it back on. Nothing here needs a password or a key.</Label>
+    </Field>
+    <Field id="backupFolder" type="textfield">
+        <Label>Backup folder (blank = Z-Wave Controller Backups, next to the Indigo folder):</Label>
+    </Field>
+    <Field id="portOverride" type="textfield">
+        <Label>Serial port (blank = the port Indigo's Z-Wave interface uses):</Label>
+    </Field>
+    <Field id="waitMinutes" type="textfield" defaultValue="10">
+        <Label>Wait for Z-Wave to be switched off (minutes):</Label>
+    </Field>
+    <Field id="sep1" type="separator"/>
+    <Field id="debugLogging" type="checkbox" defaultValue="false">
+        <Label>Debug logging</Label>
+        <Description>Show every read and write chunk in the Event Log.</Description>
+    </Field>
+</PluginConfig>
