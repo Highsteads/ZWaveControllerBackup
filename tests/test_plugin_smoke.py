@@ -118,7 +118,7 @@ def load_plugin(tmp_path, zwave_enabled, folder=None):
     finally:
         os.chdir(cwd)
     prefs = {"backupFolder": folder or "", "portOverride": "", "waitMinutes": "1", "debugLogging": "false"}
-    plugin = mod.Plugin("com.clives.indigoplugin.zwave-controller-backup", "Z-Wave Controller Backup", "1.0.0", prefs)
+    plugin = mod.Plugin("com.clives.indigoplugin.zwave-controller-backup", "Z-Wave Controller Backup", mod.PLUGIN_VERSION, prefs)
     return mod, plugin, ind
 
 
@@ -184,7 +184,7 @@ def test_backup_end_to_end_writes_image_and_sidecar_and_states(tmp_path):
     path, side = images[0]
     assert open(path, "rb").read() == bytes(stick.nvm)
     assert side["identity"]["homeId"] == "E0BB7FA8" and side["checks"]["readsIdentical"] is True
-    assert side["pluginVersion"] == "1.0.0" and side["indigoVersion"] == "2025.2.0"
+    assert side["pluginVersion"] == mod.PLUGIN_VERSION and side["indigoVersion"] == "2025.2.0"
     assert dev.states["lastBackupOk"] is True
     assert dev.states["homeId"] == "E0BB7FA8"
     assert dev.states["controllerModel"] == "Aeotec Z-Stick Gen5"
@@ -423,3 +423,23 @@ def test_network_attached_interface_is_refused(tmp_path, conn):
     run_and_join(plugin, plugin.menuBackup, {})
     assert any("over the network" in m for m in spy.messages(logging.ERROR))
     assert stick.requests == []
+
+
+def test_restore_explains_a_refused_tail_in_plain_words(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick(refuse_tail=16)
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    lines = [m for m in spy.messages(logging.INFO) if "would not accept a write" in m]
+    assert len(lines) == 1
+    assert "the last 16 bytes of its memory" in lines[0]
+    assert "exactly what the image holds" in lines[0]
+    assert "expected, not a fault" in lines[0]
+    assert not any("refused" in m for m in spy.messages(logging.ERROR))
+    assert any("Restore verified" in m for m in spy.messages(logging.INFO))

@@ -8,7 +8,7 @@
 #              Z-Wave off, does the job, and says when to switch it back on.
 # Author:      CliveS & Claude Fable 5.1
 # Date:        13-09-2026 12:25
-# Version:     1.0.0
+# Version:     1.0.1
 
 try:
     import indigo
@@ -41,7 +41,7 @@ import controller_image as ci
 # ============================================================
 
 PLUGIN_ID = "com.clives.indigoplugin.zwave-controller-backup"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 DEVICE_TYPE = "zwaveController"
 DEFAULT_FOLDER_NAME = "Z-Wave Controller Backups"
 POLL_SECONDS = 2
@@ -656,7 +656,16 @@ class Plugin(indigo.PluginBase):
         chunk = ci.initial_chunk_for(identity)
         written, skipped = ci.write_nvm(api, image, chunk, progress=self._progress("write"), should_stop=self._stop.is_set)
         for off, n in skipped:
-            self.logger.info(f"The controller refused to write {n} bytes at offset {off}, but they already hold the image's content, so nothing is lost.")
+            at_end = off + n == len(image)
+            blank = all(b == 0xFF for b in image[off:off + n])
+            where = f"the last {n} bytes of its memory" if at_end else f"{n} bytes of its memory at offset {off}"
+            note = ""
+            if at_end and blank:
+                note = (" Those bytes are blank in the image, which is what the end of a stick's memory normally holds; "
+                        "the Aeotec Gen5 is known to refuse writes there and this is expected, not a fault.")
+            self.logger.info(
+                f"The controller would not accept a write to {where}, and the plugin did not force it. It read those bytes back "
+                f"instead and they already hold exactly what the image holds, so the restore is complete and nothing is missing.{note}")
         if ci.soft_reset_allowed(identity):
             self.logger.info(f"Written {written} bytes. Resetting the controller.")
             if not ci.soft_reset(api):

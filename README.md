@@ -1,6 +1,6 @@
 # Z-Wave Controller Backup
 
-**Version:** 1.0.0 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
+**Version:** 1.0.1 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
 
 Takes a complete copy of your Z-Wave USB controller's memory, checks it, keeps it, and can put
 it back. Two clicks and about two minutes, from inside Indigo, on the Mac it already runs on.
@@ -65,6 +65,19 @@ interchangeable). The plugin checks this and refuses otherwise. Converting an im
 different generation of stick is a job for zwave-js, and needs the newer Gen5 software
 first; mat's forum write-up (topic 29135) covers that route.
 
+## Tested
+
+Live on the author's own system on 13 September 2026: an Aeotec Z-Stick Gen5 on firmware 1.01
+running a network of thirty nodes under Indigo 2025.2 on macOS. Backup took 73 seconds for its
+two full reads. Verify matched byte for byte. A restore of that image back onto the stick, with
+the unplug and replug, read back byte for byte with the Home ID and all thirty nodes intact,
+Z-Wave came back and the devices answered.
+
+One thing seen on the way, and now explained in the Event Log when it happens: the Gen5 will not
+accept a write to the last 16 bytes of its memory. Those bytes are blank in every image of it,
+so the plugin reads them back instead of forcing the write, confirms they already match, and
+carries on. It is expected, not a fault.
+
 ## Installation
 
 1. Go to the Releases page and download `Z-Wave.Controller.Backup.indigoPlugin.zip`.
@@ -85,6 +98,9 @@ API details were checked against the zwave-js project's source (MIT). Nothing fr
 bundled here; the plugin is plain Python with no dependencies.
 
 ## What's new
+
+**1.0.1** (13-Sep-2026) — The Event Log now explains, in plain words, a controller refusing to write the
+end of its memory during a restore, and why that is not a fault. README records the live test.
 
 **1.0.0** (13-Sep-2026) — First release. Backup with double read and checks, guarded restore
 with read-back verification, verify, one controller device, and the stale-backup nudge.

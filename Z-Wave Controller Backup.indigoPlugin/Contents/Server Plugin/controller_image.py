@@ -8,7 +8,7 @@
 #              under tests against a scripted stick.
 # Author:      CliveS & Claude Fable 5.1
 # Date:        13-09-2026 12:20
-# Version:     1.0.0
+# Version:     1.0.1
 #
 # Facts this file rests on (all verified 12-09-2026 against a live Aeotec Gen5,
 # firmware 1.01, and against @zwave-js/serial 15.29.0):
@@ -37,7 +37,7 @@ import termios
 import time
 import xml.etree.ElementTree as ET
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 SOF, ACK, NAK, CAN = 0x01, 0x06, 0x15, 0x18
 REQ, RES = 0x00, 0x01
