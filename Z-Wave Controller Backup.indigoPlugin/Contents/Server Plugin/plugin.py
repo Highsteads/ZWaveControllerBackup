@@ -7,8 +7,8 @@
 #              while that happens, so the plugin waits for the user to switch
 #              Z-Wave off, does the job, and says when to switch it back on.
 # Author:      CliveS & Claude Fable 5.1
-# Date:        13-09-2026 12:25
-# Version:     1.0.1
+# Date:        13-09-2026 17:45
+# Version:     1.0.2
 
 try:
     import indigo
@@ -41,7 +41,7 @@ import controller_image as ci
 # ============================================================
 
 PLUGIN_ID = "com.clives.indigoplugin.zwave-controller-backup"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.2"
 DEVICE_TYPE = "zwaveController"
 DEFAULT_FOLDER_NAME = "Z-Wave Controller Backups"
 POLL_SECONDS = 2
@@ -281,6 +281,30 @@ class Plugin(indigo.PluginBase):
             isPrimary=bool(ident.get("initIsPrimary", False)), isSUC=bool(ident.get("isSUC", False)),
         )
 
+    def _network_has_changed(self):
+        """True when Indigo holds a Z-Wave node the newest image does not, or the nudge has fired.
+        Read-only: the latch itself is set by _maybe_network_change and _refresh_device_states."""
+        if not self._last:
+            return False
+        known = set(self._last.get("identity", {}).get("nodeIds", []))
+        return bool(self._zwave_nodes_in_indigo() - known) or self._network_flag
+
+    def _controller_extras(self):
+        """What Show Plugin Info says about the controller itself. Taken from the newest image,
+        because the stick can only be read with Z-Wave off and this menu item runs with it on."""
+        if not self._last:
+            return [("Controller:", "unknown until the first backup"), ("Last backup:", "never")]
+        st = self._identity_states(self._last.get("identity", {}))
+        return [
+            ("Controller:", f"{st['controllerModel'] or 'unknown model'}, Home ID {st['homeId'] or '?'}"),
+            ("Software:", st["softwareVersion"] or "?"),
+            ("Nodes in image:", str(st["nodeCount"])),
+            ("Last backup:", self._last["takenAt"][:16].replace("T", " ")),
+            ("Image file:", _os.path.basename(self._last_path) if self._last_path else "?"),
+            ("Network changed:", "yes, a Z-Wave device was added or removed" if self._network_has_changed()
+             else "no, the last backup is current"),
+        ]
+
     def _refresh_device_states(self):
         """Everything the device shows, derived from the newest sidecar on disk."""
         if not self._last:
@@ -288,8 +312,7 @@ class Plugin(indigo.PluginBase):
                       lastBackupOk=False, lastBackupAt="", lastBackupFile="", lastResult="no backup yet")
             return
         ident = self._last.get("identity", {})
-        known = set(ident.get("nodeIds", []))
-        changed = bool(self._zwave_nodes_in_indigo() - known) or self._network_flag
+        changed = self._network_has_changed()
         self._network_flag = changed
         when = self._last["takenAt"][:16].replace("T", " ")
         status = "Network changed since backup" if changed else f"Backed up {self._pretty(self._last['takenAt'])}, current"
@@ -392,9 +415,9 @@ class Plugin(indigo.PluginBase):
             ("Backup folder:", self.backup_folder),
             ("Serial port:", self.port_override or port or "not found in Indigo's Z-Wave settings"),
             ("Connection:", conn or "?"),
-            ("Last backup:", self._last["takenAt"][:16].replace("T", " ") if self._last else "never"),
-            ("Busy with:", self._busy or "nothing"),
         ]
+        extras.extend(self._controller_extras())
+        extras.append(("Busy with:", self._busy or "nothing"))
         if log_startup_banner:
             log_startup_banner(self.pluginId, self.pluginDisplayName, self.pluginVersion, extras=extras)
         else:

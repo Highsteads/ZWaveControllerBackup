@@ -6,10 +6,11 @@
 #              port: backup writes an image and sidecar, restore refuses a wrong
 #              image and writes a right one, verify compares, the stale nudge
 #              fires once, menus refuse when busy, and the plugin never touches
-#              a port while Z-Wave is on.
+#              a port while Z-Wave is on, and Show Plugin Info describes the
+#              controller from the newest image.
 # Author:      CliveS & Claude Fable 5.1
-# Date:        13-09-2026 12:40
-# Version:     1.0.0
+# Date:        13-09-2026 17:50
+# Version:     1.1.0
 
 import importlib.util
 import json
@@ -65,7 +66,7 @@ def build_indigo(install_folder, zwave_enabled):
     ind.devices = FakeCollection()
     ind.kProtocol = types.SimpleNamespace(ZWave="zwave", Plugin="plugin")
     ind.server = types.SimpleNamespace(getInstallFolderPath=lambda: install_folder, version="2025.2.0",
-                                       log=lambda *a, **k: None)
+                                       apiVersion="3.8", log=lambda *a, **k: None)
     ind.zwave = types.SimpleNamespace(isEnabled=lambda: zwave_enabled["on"])
 
     class PluginBase:
@@ -443,3 +444,59 @@ def test_restore_explains_a_refused_tail_in_plain_words(tmp_path):
     assert "expected, not a fault" in lines[0]
     assert not any("refused" in m for m in spy.messages(logging.ERROR))
     assert any("Restore verified" in m for m in spy.messages(logging.INFO))
+
+
+def banner_lines(ind):
+    """Collect what the banner actually writes to the event log."""
+    lines = []
+    ind.server.log = lambda *a, **k: lines.append(str(a[0]) if a else "")
+    return lines
+
+
+def test_show_plugin_info_describes_the_controller_after_a_backup(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    plugin.startup()
+    stick = FakeStick()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    rows = dict(plugin._controller_extras())
+    assert rows["Controller:"] == "Aeotec Z-Stick Gen5, Home ID E0BB7FA8"
+    assert rows["Software:"] == "Z-Wave 4.54 (SDK 6.51.10)"
+    assert rows["Nodes in image:"] == str(len(GEN5["nodes"]) - 1)
+    assert rows["Image file:"].endswith(".bin") and os.sep not in rows["Image file:"]
+    assert rows["Network changed:"].startswith("no,")
+    # the banner's label column is 20 wide and its lines are ASCII only
+    assert all(len(label) <= 20 for label, _ in plugin._controller_extras())
+    assert all(str(v).isascii() for v in rows.values())
+    # ... and all of it reaches the event log when the menu item is pressed
+    lines = banner_lines(ind)
+    plugin.showPluginInfo()
+    blob = "\n".join(lines)
+    for wanted in ("Aeotec Z-Stick Gen5", "E0BB7FA8", "Nodes in image:", "Network changed:", "Busy with:"):
+        assert wanted in blob, wanted
+
+
+def test_show_plugin_info_admits_it_knows_nothing_before_the_first_backup(tmp_path):
+    zw = {"on": True}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    plugin.startup()
+    rows = dict(plugin._controller_extras())
+    assert rows["Controller:"] == "unknown until the first backup"
+    assert rows["Last backup:"] == "never"
+    assert "Software:" not in rows          # nothing invented from an image that does not exist
+    lines = banner_lines(ind)
+    plugin.showPluginInfo()
+    assert any("unknown until the first backup" in ln for ln in lines)
+
+
+def test_show_plugin_info_reports_a_network_that_has_moved_since_the_backup(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    plugin.startup()
+    stick = FakeStick()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    assert dict(plugin._controller_extras())["Network changed:"].startswith("no,")
+    plugin.deviceCreated(FakeDevice(7, "New sensor", device_type="sensor", plugin_id="", address="240"))
+    assert dict(plugin._controller_extras())["Network changed:"].startswith("yes,")

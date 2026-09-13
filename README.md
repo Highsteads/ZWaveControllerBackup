@@ -1,6 +1,6 @@
 # Z-Wave Controller Backup
 
-**Version:** 1.0.1 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
+**Version:** 1.0.2 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
 
 Takes a complete copy of your Z-Wave USB controller's memory, checks it, keeps it, and can put
 it back. Two clicks and about two minutes, from inside Indigo, on the Mac it already runs on.
@@ -29,6 +29,9 @@ makes that copy from inside Indigo, needing nothing but the stick you already ha
 - **Verify Last Backup** reads the controller and compares it with the last image.
 - **One device**, "Z-Wave Controller", shows what the controller is, when it was last backed
   up, and whether the network has changed since. Triggers and control pages can use it.
+- **Show Plugin Info** puts the same summary in the Event Log without needing the device: the
+  controller, its Home ID and software, how many nodes the last image holds, when it was taken,
+  and whether the network has changed since.
 - **A nudge when the network changes.** Adding or removing a Z-Wave device flags the last
   backup as stale in the Event Log and on the device, so you know to take a fresh one.
 
@@ -108,6 +111,10 @@ API details were checked against the zwave-js project's source (MIT). Nothing fr
 bundled here; the plugin is plain Python with no dependencies.
 
 ## What's new
+
+**1.0.2** (13-Sep-2026) — Show Plugin Info now reports the controller itself: model, Home ID,
+software version, how many nodes the last image holds, which file it is, and whether the network
+has changed since. It previously showed only the folder, port and backup time.
 
 **1.0.1** (13-Sep-2026) — The Event Log now explains, in plain words, a controller refusing to write the
 end of its memory during a restore, and why that is not a fault. README records the live test.
