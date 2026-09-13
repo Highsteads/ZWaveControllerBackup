@@ -205,3 +205,17 @@ onto the same stick -> read-back equal -> Indigo re-enabled -> a device commande
 Header block, `self.logger` + millisecond filter, on-demand banner, `showPluginInfo`,
 Python 3.13 stdlib only (termios/fcntl/json/hashlib), no requirements.txt, versioning from
 1.0.0, UK English throughout, plain-English event-log lines.
+
+## Live verification — DONE 13-Sep-2026 on CliveS's Aeotec Gen5 (firmware 1.01, SDK 6.51.10)
+
+- Backup from the menu: two full reads, identical, 256 KB image + sidecar written, device
+  states populated. Read speed 35 s per pass once the serial layer waited on the port with
+  select(); the first run took 308 s because the plugin host stretches short sleeps.
+- Restore of that image onto the same stick: 52 s write, the stick refused the final 16 bytes
+  (offset 262128) and the plugin proved them by read-back instead; soft reset acknowledged;
+  read-back after five minutes matched byte for byte, Home ID E0BB7FA8, 30 nodes.
+- Z-Wave re-enabled, Indigo reconnected in 1.6 s, a mains plug answered a status request.
+- Found on the way and fixed: opening 0.8 s after Indigo closed the port drew a CAN on every
+  request (the stick was mid-reply), so the plugin now pauses two seconds, drains and ACKs
+  what the stick still has to say, and backs off on collisions; the Restore dialog's pop-up
+  preselects the newest image.
