@@ -80,7 +80,8 @@ carries on. It is expected, not a fault.
 
 ## Installation
 
-1. Go to the Releases page and download `Z-Wave.Controller.Backup.indigoPlugin.zip`.
+1. Download the plugin:
+   https://github.com/Highsteads/ZWaveControllerBackup/releases/latest/download/Z-Wave.Controller.Backup.indigoPlugin.zip
 2. Unzip the downloaded file. You will get `Z-Wave Controller Backup.indigoPlugin`.
 3. Double-click `Z-Wave Controller Backup.indigoPlugin`. Indigo will install it automatically.
 4. Optionally create one "Z-Wave Controller" device (Devices, New, Type: Z-Wave Controller
@@ -89,6 +90,15 @@ carries on. It is expected, not a fault.
 Images go to `Z-Wave Controller Backups` next to the Indigo folder unless you choose another
 folder in the plugin's Configure dialog. They are about 256 KB each, so keep them all, and
 let your normal backup carry the folder off the Mac.
+
+## If something goes wrong
+
+Please report it in the Indigo forum thread rather than opening a GitHub issue:
+https://forums.indigodomo.com/viewtopic.php?t=29135
+
+The Event Log lines from the plugin are the useful part — they name the controller, the sizes
+and exactly which step stopped. GitHub issues are turned off on this repository on purpose, so
+the thread is the one place to look.
 
 ## Credits
 
