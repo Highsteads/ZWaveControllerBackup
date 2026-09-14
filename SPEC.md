@@ -198,6 +198,8 @@ onto the same stick -> read-back equal -> Indigo re-enabled -> a device commande
   PluginVersion 1.0.0, ServerApiVersion 3.0, CFBundleVersion 1.0.0, CFBundleURLTypes -> the repo,
   GithubInfo {GithubRepo, GithubUser}, `Contents/Resources/icon.png` for the store.
 - v1.0.0 GitHub release with the `.indigoPlugin.zip` once the live verification has passed.
+- Released so far: v1.0.0, v1.0.1, v1.0.2 and v1.1.0 (14-Sep-2026, the 700 and 800 series,
+  see the section at the end). PluginVersion follows the release, CFBundleVersion stays 1.0.0.
 - Credit mat's write-up and zwave-js (MIT) in the README. Nothing vendored from either.
 
 ## Pre-fills assumed (shout if wrong)
