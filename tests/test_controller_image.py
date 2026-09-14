@@ -5,7 +5,7 @@
 #              framing vectors, the parser under unsolicited / corrupt / CAN
 #              traffic, identity from Gen5-shaped payloads, adaptive reads, the
 #              write path, image checks, sidecars and every restore guard.
-# Author:      CliveS & Claude Fable 5.1
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
 # Date:        14-09-2026 16:30
 # Version:     1.1.0
 

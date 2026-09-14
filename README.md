@@ -1,6 +1,6 @@
 # Z-Wave Controller Backup
 
-**Version:** 1.1.0 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
+**Version:** 1.1.0 | **Author:** CliveS, Autolog & Claude | **Platform:** Indigo 2025.2 or later, macOS
 
 Takes a complete copy of your Z-Wave USB controller's memory, checks it, keeps it, and can put
 it back. Two clicks and about two minutes, from inside Indigo, on the Mac it already runs on.
@@ -57,12 +57,12 @@ similar. 700 and 800 series: the Zooz ZST10 700 and ZST39, the Aeotec Z-Stick 7 
 10 Pro, the Silicon Labs UZB-7 and similar. The plugin finds the port from Indigo's own Z-Wave
 settings, so there is nothing to configure, and works out which generation it is talking to.
 
-The 700 and 800 series keep their memory as a small filesystem rather than a flat block, and
-are read and written through a different Serial API command. Two things follow, both explained
-in the Event Log when they happen: the stick is reset at the end of every visit (that is the
-documented way to leave its memory tidy, and Indigo reconnects to it as normal), and a restore
-does not need the unplug-and-replug a 500-series stick needs. A backup takes about twenty
-seconds.
+The 700 and 800 series support was written by **Autolog**. Those sticks keep their memory as a
+small filesystem rather than a flat block, and are read and written through a different Serial
+API command. Two things follow, both explained in the Event Log when they happen: the stick is
+reset at the end of every visit (that is the documented way to leave its memory tidy, and Indigo
+reconnects to it as normal), and a restore does not need the unplug-and-replug a 500-series
+stick needs. A backup takes about twenty seconds.
 
 Sticks connected over the network rather than USB are out.
 
@@ -147,14 +147,15 @@ bundled here; the plugin is plain Python with no dependencies.
 
 ## What's new
 
-**1.1.0** (14-Sep-2026) — 700 and 800 series sticks (Zooz ZST10 700 and ZST39, Aeotec Z-Stick 7
-and Z-Stick 10 Pro, UZB-7 and similar): backup, restore and verify through the NVM3 commands
-those sticks use, tested live on a ZST39 LR and a 700 series stick against Z-Wave JS UI. No
-unplug needed on this generation, because the closing reset does the job. Node ids are read
-correctly from a stick that zwave-js has left in 16-bit mode. Show Plugin Info and the device report the
-full SDK version. Two small fixes found on the way: a backup folder pasted with quotes around it
-is cleaned up rather than landing the images inside the plugin bundle, and the Home ID check
-looks at every network Indigo's settings remember instead of the first one it finds.
+**1.1.0** (14-Sep-2026) — 700 and 800 series sticks, contributed by **Autolog** (Zooz ZST10 700
+and ZST39, Aeotec Z-Stick 7 and Z-Stick 10 Pro, UZB-7 and similar): backup, restore and verify
+through the NVM3 commands those sticks use, tested live on a ZST39 LR and a 700 series stick
+against Z-Wave JS UI. No unplug needed on this generation, because the closing reset does the
+job. Node ids are read correctly from a stick that zwave-js has left in 16-bit mode. Show Plugin
+Info and the device report the full SDK version. Two small fixes found on the way: a backup
+folder pasted with quotes around it is cleaned up rather than landing the images inside the
+plugin bundle, and the Home ID check looks at every network Indigo's settings remember instead
+of the first one it finds.
 
 **1.0.2** (13-Sep-2026) — Show Plugin Info now reports the controller itself: model, Home ID,
 software version, how many nodes the last image holds, which file it is, and whether the network

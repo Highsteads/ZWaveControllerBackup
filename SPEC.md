@@ -198,8 +198,8 @@ onto the same stick -> read-back equal -> Indigo re-enabled -> a device commande
   PluginVersion 1.0.0, ServerApiVersion 3.0, CFBundleVersion 1.0.0, CFBundleURLTypes -> the repo,
   GithubInfo {GithubRepo, GithubUser}, `Contents/Resources/icon.png` for the store.
 - v1.0.0 GitHub release with the `.indigoPlugin.zip` once the live verification has passed.
-- Released so far: v1.0.0, v1.0.1, v1.0.2 and v1.1.0 (14-Sep-2026, the 700 and 800 series,
-  see the section at the end). PluginVersion follows the release, CFBundleVersion stays 1.0.0.
+- Released so far: v1.0.0, v1.0.1, v1.0.2 and v1.1.0 (14-Sep-2026, the 700 and 800 series by
+  Autolog, see the section at the end). PluginVersion follows the release, CFBundleVersion stays 1.0.0.
 - Credit mat's write-up and zwave-js (MIT) in the README. Nothing vendored from either.
 
 ## Pre-fills assumed (shout if wrong)
@@ -223,7 +223,7 @@ Python 3.13 stdlib only (termios/fcntl/json/hashlib), no requirements.txt, versi
   preselects the newest image.
 
 
-## 700 / 800 series — added in v1.1.0 (14-Sep-2026)
+## 700 / 800 series — added in v1.1.0 (14-Sep-2026), contributed by Autolog
 
 Verified live on a Zooz ZST39 LR (800 series, "Z-Wave 7.24", SDK 7.24.2, ids 027A:0004:0610,
 NVM 40960 bytes) and a Silicon Labs 700 series stick (Z-Wave 7.17, SDK 7.17.1, ids

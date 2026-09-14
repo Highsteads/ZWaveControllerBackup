@@ -8,7 +8,7 @@
 #              fires once, menus refuse when busy, and the plugin never touches
 #              a port while Z-Wave is on, and Show Plugin Info describes the
 #              controller from the newest image.
-# Author:      CliveS & Claude Fable 5.1
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
 # Date:        14-09-2026 16:30
 # Version:     1.2.0
 
