@@ -95,16 +95,16 @@ so the plugin reads them back instead of forcing the write, confirms they alread
 carries on. It is expected, not a fault.
 
 700 and 800 series, live on 14 September 2026 on a second system: a Zooz ZST39 LR (800 series,
-Z-Wave 7.24, ten nodes), an Aeotec Z-Stick 10 Pro (800 series, Z-Wave 7.23, its Z-Wave side;
-the Zigbee side is a separate port the plugin ignores) and a Silicon Labs 700 series stick
+Z-Wave 7.24, ten nodes), an Aeotec Z-Stick 10 Pro (800 series, Z-Wave 7.23, its Z-Wave side — the
+Zigbee side is a separate port the plugin ignores) and a Silicon Labs 700 series stick
 (Z-Wave 7.17, 108 node ids) running Indigo 2025.2's network. Backups matched a Z-Wave JS UI
 backup of the same stick byte for byte, on both of the Serial API commands the plugin uses. A
 restore of an older image onto the ZST39 brought back its older node table, and a restore of
-the current image put it back; the Z-Stick 10 Pro went through backup, verify, restore and
-verify the same way; each restore verified by read-back.
+the current image put it back. The Z-Stick 10 Pro went through backup, verify, restore and
+verify the same way, each restore verified by read-back.
 
 Two things learnt there, and now built in: a 700/800 stick answers the very last write of a
-restore with "end of file" and does not perform it (zwave-js sees the same; those bytes hold
+restore with "end of file" and does not perform it (zwave-js sees the same, and those bytes hold
 nothing any of its files refer to), and it must not be asked to write those bytes in smaller
 pieces, because a one-byte write there hung the ZST39 outright until it was replugged. The
 plugin leaves that tail alone and says so. And after any reset the stick may append a few
@@ -150,8 +150,8 @@ bundled here; the plugin is plain Python with no dependencies.
 **1.1.0** (14-Sep-2026) — 700 and 800 series sticks (Zooz ZST10 700 and ZST39, Aeotec Z-Stick 7
 and Z-Stick 10 Pro, UZB-7 and similar): backup, restore and verify through the NVM3 commands
 those sticks use, tested live on a ZST39 LR and a 700 series stick against Z-Wave JS UI. No
-unplug needed on this generation; the closing reset does the job. Node ids are read correctly
-from a stick that zwave-js has left in 16-bit mode. Show Plugin Info and the device report the
+unplug needed on this generation, because the closing reset does the job. Node ids are read
+correctly from a stick that zwave-js has left in 16-bit mode. Show Plugin Info and the device report the
 full SDK version. Two small fixes found on the way: a backup folder pasted with quotes around it
 is cleaned up rather than landing the images inside the plugin bundle, and the Home ID check
 looks at every network Indigo's settings remember instead of the first one it finds.
