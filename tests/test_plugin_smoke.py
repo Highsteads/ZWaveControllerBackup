@@ -9,8 +9,8 @@
 #              a port while Z-Wave is on, and Show Plugin Info describes the
 #              controller from the newest image.
 # Author:      CliveS & Claude Fable 5.1
-# Date:        13-09-2026 17:50
-# Version:     1.1.0
+# Date:        14-09-2026 16:30
+# Version:     1.2.0
 
 import importlib.util
 import json
@@ -23,7 +23,7 @@ import types
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fake_stick import GEN5, SERVER_PLUGIN, FakeStick  # noqa: E402
+from fake_stick import GEN5, SERVER_PLUGIN, STICK700, ZST39, FakeStick, FakeStick700  # noqa: E402
 
 
 # ── the smallest Indigo that will hold still ─────────────────────────
@@ -165,6 +165,20 @@ def test_plugin_imports_starts_and_writes_the_folder_readme(tmp_path):
     assert plugin.backup_folder.endswith("Z-Wave Controller Backups")
     assert FakeCollection.subscribed >= 1
     assert plugin.wait_minutes == 1
+
+
+def test_backup_warns_only_when_the_home_id_is_unknown_to_indigo(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    wire_stick(mod, plugin, FakeStick())                       # Home ID E0BB7FA8, which the stub prefs know
+    run_and_join(plugin, plugin.menuBackup, {})
+    assert not any("Home ID" in m for m in spy.messages(logging.WARNING))
+    wire_stick(mod, plugin, FakeStick700())                    # E2DAD17B, which they do not
+    run_and_join(plugin, plugin.menuBackup, {})
+    assert any("only know E0BB7FA8" in m for m in spy.messages(logging.WARNING))
 
 
 def test_backup_end_to_end_writes_image_and_sidecar_and_states(tmp_path):
@@ -375,6 +389,14 @@ def test_prefs_validation_and_menu_prefill(tmp_path):
     assert ok is False and "waitMinutes" in errors
     ok, values = plugin.validatePrefsConfigUi({"waitMinutes": "5", "backupFolder": os.path.join(str(tmp_path), "elsewhere")})[:2]
     assert ok is True and os.path.isdir(os.path.join(str(tmp_path), "elsewhere"))
+    # quotes around a pasted path are dropped, and a relative path is refused rather than landing in the bundle
+    quoted = "'" + os.path.join(str(tmp_path), "quoted") + "'"
+    ok, values = plugin.validatePrefsConfigUi({"waitMinutes": "5", "backupFolder": quoted})[:2]
+    assert ok is True and values["backupFolder"] == os.path.join(str(tmp_path), "quoted") and os.path.isdir(values["backupFolder"])
+    ok, values, errors = plugin.validatePrefsConfigUi({"waitMinutes": "5", "backupFolder": "relative/folder"})
+    assert ok is False and "backupFolder" in errors and not os.path.exists("relative/folder")
+    plugin._read_prefs({"backupFolder": "'relative'", "waitMinutes": "5"})
+    assert plugin.backup_folder == plugin._default_folder()
     assert plugin.get_menu_action_config_ui_values("menuBackup")["folderShown"] == plugin.backup_folder
     assert plugin.imageList()[0][1].startswith("No images")
     assert "imageFile" not in plugin.get_menu_action_config_ui_values("menuRestore")
@@ -395,18 +417,169 @@ def test_restore_dialog_preselects_the_newest_image(tmp_path):
     assert plugin.get_menu_action_config_ui_values("menuRestore")["imageFile"] == newest
 
 
-def test_700_series_is_refused_before_any_read(tmp_path):
+def test_unrecognised_generation_is_refused_before_any_read(tmp_path):
     zw = {"on": False}
     mod, plugin, ind = load_plugin(tmp_path, zw)
     spy = LogSpy()
     plugin.logger.addHandler(spy)
     plugin.startup()
-    stick = FakeStick(profile=dict(GEN5, library=b"Z-Wave 7.19\x00" + bytes([1])))
+    stick = FakeStick(profile=dict(GEN5, library=b"Z-Wave\x00" + bytes([1])))     # no version at all
     wire_stick(mod, plugin, stick)
     run_and_join(plugin, plugin.menuBackup, {})
-    assert any("700 or 800 series" in m for m in spy.messages(logging.ERROR))
-    assert not any(f == mod.ci.F_EXT_NVM_READ for f, _ in stick.requests)
+    assert any("does not recognise" in m for m in spy.messages(logging.ERROR))
+    assert not any(f in (mod.ci.F_EXT_NVM_READ, mod.ci.F_NVM_OPERATIONS, mod.ci.F_EXT_NVM_OPERATIONS) for f, _ in stick.requests)
     assert mod.ci.list_images(plugin.backup_folder) == []
+
+
+@pytest.mark.parametrize("profile,func,size", [(ZST39, 0x3D, 40960), (STICK700, 0x2E, 49152)])
+def test_700_series_backup_end_to_end(tmp_path, profile, func, size):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick700(profile=profile)
+    wire_stick(mod, plugin, stick)
+    before = bytes(stick.nvm)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    assert open(path, "rb").read() == before
+    assert side["nvm"]["sizeBytes"] == size and side["nvm"]["function"] == f"0x{func:02X}"
+    assert side["identity"]["homeId"] == profile["homeId"].hex().upper()
+    # radio off and watchdog stopped before the first NVM op, reset on the way out, radio back on
+    funcs = [f for f, _ in stick.requests]
+    assert funcs.index(mod.ci.F_SET_RF_RECEIVE_MODE) < funcs.index(func)
+    assert funcs.index(mod.ci.F_STOP_WATCHDOG) < funcs.index(func)
+    assert funcs[-1] == mod.ci.F_SOFT_RESET and stick.resets == 1 and stick.radio_on
+    assert not any(f in (mod.ci.F_NVM_GET_ID, mod.ci.F_EXT_NVM_READ) for f in funcs)      # no 500-series calls
+    assert any("Backup complete" in m for m in spy.messages(logging.INFO))
+    assert any(f"({700 if func == 0x2E else 800} series)" in m for m in spy.messages(logging.INFO))
+    st = plugin._shadow
+    assert st["softwareVersion"].startswith("Z-Wave 7.") and st["homeId"] == side["identity"]["homeId"]
+
+
+def test_700_series_restore_end_to_end_without_a_replug(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick700()
+    wire_stick(mod, plugin, stick)
+    replug_calls = []
+    plugin._wait_for_replug = lambda port_path: replug_calls.append(port_path)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    image = open(path, "rb").read()
+    # scribble on the stick so the restore has work to do
+    stick.nvm[100:2000] = b"\x00" * 1900
+    writes_before = stick.write_count
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert stick.write_count > writes_before
+    assert replug_calls == []                                          # the reset is the step, not an unplug
+    assert bytes(stick.nvm[100:2000]) == image[100:2000]               # the scribble is gone
+    d = mod.ci.compare_images_700(image, bytes(stick.nvm), 64)         # only housekeeping + tail may differ
+    assert d["unexplainedBytes"] == 0
+    assert any("Restore verified" in m for m in spy.messages(logging.INFO))
+    assert any("end of file" in m and "did not write them" in m for m in spy.messages(logging.INFO))
+    assert stick.resets == 3 and not stick.hung and stick.radio_on   # backup 1, restore 2: after the write and on the way out
+    assert plugin._shadow["lastResult"].startswith("restore ok")
+
+
+def test_700_series_restore_notices_a_write_that_did_not_take(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick700()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+
+    class Forgetful(FakeStick700):
+        """Says OK to every write and keeps none of it."""
+        def _nvm_op(self, func, payload):
+            if payload[0] == mod.ci.NVM_OP_WRITE and self.nvm_open:
+                w = 4 if func == mod.ci.F_EXT_NVM_OPERATIONS else 2
+                return bytes([0, 0]) + payload[2:2 + w]
+            return super()._nvm_op(func, payload)
+    forget = Forgetful()
+    forget.nvm[100:2000] = b"\x00" * 1900
+    wire_stick(mod, plugin, forget)
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert any("did NOT hold" in m and "not housekeeping" in m for m in spy.messages(logging.ERROR))
+    assert plugin._shadow["lastResult"].startswith("restore failed")
+
+
+def test_700_series_restore_notices_a_node_table_that_differs(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick700()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    stick.profile["nodes"] = ZST39["nodes"] + [40]      # the stick keeps reporting a node the image lacks
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert any("did NOT hold" in m and "lists 11 nodes where the image has 10" in m for m in spy.messages(logging.ERROR))
+
+
+def test_700_series_verify_tolerates_housekeeping_and_reports_real_change(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick700()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    # the reset at the end of the backup already appended housekeeping into erased space
+    run_and_join(plugin, plugin.menuVerify)
+    assert any("Verified" in m and "added in free space" in m for m in spy.messages(logging.INFO))
+    stick.profile["nodes"] = ZST39["nodes"] + [40]      # a node appeared, though every byte of it landed in free space
+    run_and_join(plugin, plugin.menuVerify)
+    assert any("lists 11 nodes where the last backup has 10" in m for m in spy.messages(logging.WARNING))
+    assert plugin._shadow["networkChangedSinceBackup"] is True
+    stick.profile["nodes"] = ZST39["nodes"]
+    plugin._network_flag = False
+    stick.nvm[200:210] = b"\x00" * 10                   # a real change to a node file
+    run_and_join(plugin, plugin.menuVerify)
+    assert any("differs from the last backup" in m for m in spy.messages(logging.WARNING))
+
+
+def test_700_series_session_is_closed_with_a_reset_even_when_the_read_fails(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+
+    class Broken(FakeStick700):
+        def _nvm_op(self, func, payload):
+            if payload[0] == mod.ci.NVM_OP_READ and self.nvm_open:
+                return bytes([0x03, 0])                  # operation interference, every time
+            return super()._nvm_op(func, payload)
+    stick = Broken()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    assert any("Backup failed" in m and "interference" in m for m in spy.messages(logging.ERROR))
+    assert stick.resets == 1 and stick.radio_on             # never left with the radio off
+    assert mod.ci.list_images(plugin.backup_folder) == []
+
+
+def test_16_bit_node_id_mode_does_not_confuse_the_backup(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    plugin.startup()
+    stick = FakeStick700(node_id_bits=16)
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    assert side["identity"]["ownNodeId"] == 1 and side["identity"]["sucNodeId"] == 1
+    assert plugin._shadow["nodeCount"] == len(ZST39["nodes"]) - 1
 
 
 @pytest.mark.parametrize("conn", ["netSocket", "netRfc2217"])

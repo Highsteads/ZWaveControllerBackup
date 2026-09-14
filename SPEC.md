@@ -219,3 +219,57 @@ Python 3.13 stdlib only (termios/fcntl/json/hashlib), no requirements.txt, versi
   request (the stick was mid-reply), so the plugin now pauses two seconds, drains and ACKs
   what the stick still has to say, and backs off on collisions; the Restore dialog's pop-up
   preselects the newest image.
+
+
+## 700 / 800 series — added in v1.1.0 (14-Sep-2026)
+
+Verified live on a Zooz ZST39 LR (800 series, "Z-Wave 7.24", SDK 7.24.2, ids 027A:0004:0610,
+NVM 40960 bytes) and a Silicon Labs 700 series stick (Z-Wave 7.17, SDK 7.17.1, ids
+0000:0004:0004, NVM 49152 bytes, 108 node ids, Indigo 2025.2's live network), against
+zwave-js 15.29 whose backupNVMRaw700 serial frames were captured from Z-Wave JS UI and matched.
+
+**Scope change:** "700/800-series sticks" moves from *Out* to *In*. Conversion between
+generations stays out (zwave-js `nvmedit convert`; documented, not done).
+
+| Use | Function | Notes |
+|---|---|---|
+| full SDK version ("7.17.1") | 0x09 GetProtocolVersion | payload[1..3]; only asked when the bitmask advertises it |
+| function bitmask | 0x07 GetSerialApiCapabilities | bytes 8..39, bit n-1 = function n; decides 0x2E vs 0x3D |
+| radio off / on | 0x10 SetRFReceiveMode | [00] before any NVM access, response [01] = done |
+| watchdog off | 0xD3 StopWatchdog | no response frame; the closing reset starts it again |
+| NVM open/read/write/close | 0x2E NVMOperations | [op, len, offset16]; reply [status, len, offset16, data] |
+| the same, 32-bit offsets | 0x3D ExtendedNVMOperations | used when advertised (800 series, NVM over 64 KB); open reply carries a supported-ops bitmask |
+| reset | 0x08 SoftReset | mandatory after any NVM visit; the stick answers with an unsolicited 0x0A SerialAPIStarted ~110 ms later |
+
+Statuses: 0x00 ok, 0xFF end of file (also ok), 0x01 error, 0x02 operation mismatch, 0x03
+operation interference, 0x04 sub-command not supported. Reads ask for 255 bytes and take the
+chunk that comes back (64 on both sticks); an empty reply to the probe drops the chunk to 48.
+Writes go in the probed chunk. Both sticks answer node ids in 16-bit mode if zwave-js has
+put them there, so MemoryGetId and GetSUCNodeId are parsed by payload length.
+
+**Session:** identity -> radio off -> watchdog off -> open (size) -> close -> [reads / writes]
+-> soft reset -> wait for SerialAPIStarted. The reset is always sent on the way out, on failure
+too, so the stick is never left with its radio off. No replug on restore: the reset is the
+documented step and the read-back follows it at once.
+
+**Restore facts:** the write whose end reaches the NVM size is answered 0xFF and NOT performed
+(zwave-js behaves the same and never checks). Splitting it: 32 bytes at size-64 ok, 32 at
+size-32 refused, 16/8/4/2-byte writes down to size-2 ok, then a 1-byte write at size-2 hung
+the ZST39 (no ACK, soft reset ignored, watchdog stopped, replug needed). Hence: never retry the
+tail in smaller pieces; report it as declined; verify around it.
+
+**Verification:** byte-identical read-back is not achievable on NVM3 — the firmware appends
+housekeeping objects into erased (0xFF) space on restart (74 bytes after one restore) and can
+relocate pages after a power cycle. A 700/800 restore is verified by `compare_images_700`:
+differences are allowed only inside the declined tail and where the image holds 0xFF; anything
+else is "did NOT hold". The Home ID and the node table reported after the reset must equal the
+sidecar's. Verify Last Backup uses the same comparison and says how many housekeeping bytes
+appeared.
+
+**Guards added:** `protocolVersionFull` equal when both sides have it (the library string
+"Z-Wave 7.17" is coarser than the layout). Known models: ZST39 LR (027A:0004:0610) and the
+Silicon Labs 700 reference ids (0000:0004:0004).
+
+**Tests added:** `FakeStick700` with ZST39 and 700 profiles from the captured payloads,
+including the declined tail, the hang on a tail write (asserted never triggered), 16-bit node
+ids, the probe fallback, the housekeeping append on reset, and a stick that drops writes.

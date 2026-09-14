@@ -6,9 +6,9 @@
 #              sidecar files and the restore guards. Never imports indigo. Any
 #              object with read() and write() is a port, so everything here runs
 #              under tests against a scripted stick.
-# Author:      CliveS & Claude Fable 5.1
-# Date:        13-09-2026 12:20
-# Version:     1.0.1
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
+# Date:        14-09-2026 16:30
+# Version:     1.1.0
 #
 # Facts this file rests on (all verified 12-09-2026 against a live Aeotec Gen5,
 # firmware 1.01, and against @zwave-js/serial 15.29.0):
@@ -23,6 +23,32 @@
 #     stick accepts (zwave-js uses 48 for the Aeotec Gen5 and the Z-Wave.me UZB).
 #   * The write chunk is (largest read reply - 5), the 5 being the offset+length
 #     header, exactly as zwave-js restoreNVMRaw500 does it.
+#
+# 700 and 800 series (verified 14-09-2026 against a Zooz ZST39 LR, Z-Wave 7.24, and a
+# Silicon Labs 700 reference stick, Z-Wave 7.17, and against zwave-js backupNVMRaw700 /
+# restoreNVMRaw700 whose serial frames were captured live and matched byte for byte):
+#   * Their memory is not a flat EEPROM but an NVM3 filesystem, reached through
+#     NVMOperations 0x2E (open / read / write / close, 16-bit offsets) or, when the
+#     stick advertises it in its GetSerialApiCapabilities bitmask, ExtendedNVMOperations
+#     0x3D (the same with 32-bit offsets, needed once the NVM exceeds 64 KB). Open
+#     answers with the NVM size; reads asked for 255 bytes come back in whatever chunk
+#     the stick likes (64 on both sticks here); writes go in that same chunk.
+#   * The radio is switched off (SetRFReceiveMode 0x10) and the hardware watchdog
+#     stopped (0xD3) before touching the NVM, and the stick is soft-reset afterwards:
+#     every 7.x firmware leaves the NVM in an odd state after a read until it restarts
+#     (zwave-js does the same for the same reason). The reset announces itself with an
+#     unsolicited SerialAPIStarted 0x0A about 110 ms later, and the radio is on again.
+#   * The final write, the one that reaches the end of the NVM, is answered with
+#     "end of file" and NOT written; zwave-js has the same behaviour. Those bytes hold
+#     nothing any file refers to. They must NOT be retried in smaller pieces: a one-byte
+#     write near the end hung the ZST39's firmware outright, with the watchdog stopped
+#     so it could not recover itself, and only a replug brought it back.
+#   * Byte-identical read-back is not possible on this generation: the firmware appends
+#     its own housekeeping objects into erased space when it restarts. A restore is
+#     verified by comparing everywhere the image holds data, plus the identity and node
+#     table the stick reports afterwards.
+#   * Node ids come back as two bytes when the stick has been put in 16-bit node id mode
+#     (zwave-js does that and it survives a soft reset), so they are parsed by length.
 
 import datetime
 import errno
@@ -37,7 +63,7 @@ import termios
 import time
 import xml.etree.ElementTree as ET
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 
 SOF, ACK, NAK, CAN = 0x01, 0x06, 0x15, 0x18
 REQ, RES = 0x00, 0x01
@@ -46,12 +72,26 @@ F_GET_INIT_DATA      = 0x02
 F_GET_CTRL_CAPS      = 0x05
 F_GET_SERIALAPI_CAPS = 0x07
 F_SOFT_RESET         = 0x08
+F_GET_PROTOCOL_VER   = 0x09   # 700+: full "7.17.1" version, build number, git hash
+F_SERIAL_API_STARTED = 0x0A   # unsolicited, sent by a 700+ stick as it comes back from a reset
+F_SET_RF_RECEIVE_MODE = 0x10
 F_GET_VERSION        = 0x15
 F_MEMORY_GET_ID      = 0x20
 F_NVM_GET_ID         = 0x29
 F_EXT_NVM_READ       = 0x2A
 F_EXT_NVM_WRITE      = 0x2B
+F_NVM_OPERATIONS     = 0x2E   # 700+: open/read/write/close, 16-bit offsets
+F_EXT_NVM_OPERATIONS = 0x3D   # 700+: the same with 32-bit offsets, when advertised
 F_GET_SUC_NODE_ID    = 0x56
+F_STOP_WATCHDOG      = 0xD3   # 700+: no response frame
+
+# NVMOperations / ExtendedNVMOperations sub-commands and statuses (@zwave-js/serial).
+NVM_OP_OPEN, NVM_OP_READ, NVM_OP_WRITE, NVM_OP_CLOSE = 0x00, 0x01, 0x02, 0x03
+NVM_ST_OK, NVM_ST_EOF = 0x00, 0xFF
+NVM_STATUS_NAMES = {0x00: "ok", 0x01: "error", 0x02: "operation mismatch", 0x03: "operation interference",
+                    0x04: "sub-command not supported", 0xFF: "end of file"}
+NVM700_PROBE = 0xFF           # ask for this much; the stick answers in the chunk it likes
+NVM700_FALLBACK_CHUNK = 48    # what zwave-js drops to when a 255-byte read comes back empty
 
 # NVMSize code (GetNVMId payload[3]) -> bytes, from @zwave-js/serial GetNVMIdMessages.
 NVM_SIZES = {14: 16 * 1024, 15: 32 * 1024, 16: 64 * 1024, 17: 128 * 1024, 18: 256 * 1024,
@@ -79,7 +119,12 @@ PROTOCOL_TO_SDK = {
 KNOWN_MODELS = {
     (0x0086, 0x0001, 0x005A): "Aeotec Z-Stick Gen5",
     (0x0115, 0x0400, 0x0001): "Z-Wave.me UZB",
+    (0x027A, 0x0004, 0x0610): "Zooz ZST39 LR",              # 800 series, seen 14-09-2026
+    (0x0371, 0x0004, 0x003C): "Aeotec Z-Stick 10 Pro",      # 800 series (Z-Wave side of the dual stick), seen 14-09-2026
+    (0x0000, 0x0004, 0x0004): "Silicon Labs 700 series stick",  # the reference ids many 700 sticks ship with
 }
+# chipType from GetSerialApiInitData -> generation. 5 = 500 (Gen5 measured), 7 and 8 measured 14-09-2026.
+CHIP_SERIES = {5: 500, 7: 700, 8: 800}
 # Sticks that choke on large NVM reads; zwave-js starts these at 48 bytes.
 CHUNK_48_MODELS = {(0x0086, 0x0001, 0x005A), (0x0115, 0x0400, 0x0001)}
 # Sticks zwave-js never soft-resets (they do not come back): the replug does the job instead.
@@ -390,10 +435,48 @@ def is_500_series(identity):
     return int(proto.split(".")[0]) < 7
 
 
+def is_700_series(identity):
+    """True for the 700 and 800 series (both speak 'Z-Wave 7.x' and share the NVM3 protocol)."""
+    proto = protocol_string(identity.get("libraryVersionString"))
+    return bool(proto) and int(proto.split(".")[0]) >= 7
+
+
+def series_of(identity):
+    """500, 700 or 800 from the chip type, falling back to the library string; None if unknown."""
+    series = CHIP_SERIES.get(identity.get("chipType"))
+    if series:
+        return series
+    if is_500_series(identity):
+        return 500
+    if is_700_series(identity):
+        return 700
+    return None
+
+
 def software_description(identity):
     lib = identity.get("libraryVersionString") or "unknown"
-    sdk = sdk_version(lib)
+    sdk = identity.get("protocolVersionFull") or sdk_version(lib)
     return f"{lib} (SDK {sdk})" if sdk else lib
+
+
+def parse_function_bitmask(caps_payload):
+    """Function ids a stick advertises in GetSerialApiCapabilities (bytes 8..39): bit n-1 set = function n."""
+    bm = caps_payload[8:8 + 32]
+    return [bi * 8 + bit + 1 for bi, by in enumerate(bm) for bit in range(8) if by & (1 << bit)]
+
+
+def node_id_from(payload, start):
+    """A node id at `start`: one byte, or two big-endian bytes when the stick is in 16-bit
+    node id mode (the payload is then one byte longer). zwave-js puts 700+ sticks in that
+    mode and it survives a soft reset, so Indigo's stick can be found either way."""
+    if len(payload) >= start + 2:
+        return int.from_bytes(payload[start:start + 2], "big")
+    return payload[start]
+
+
+def nvm_function_for(identity):
+    """Which NVM function a 700+ stick is driven through: 0x3D when it advertises it, else 0x2E."""
+    return F_EXT_NVM_OPERATIONS if F_EXT_NVM_OPERATIONS in identity.get("supportedFunctionIds", []) else F_NVM_OPERATIONS
 
 
 def read_identity(api):
@@ -406,7 +489,7 @@ def read_identity(api):
     ident["sdkVersion"] = sdk_version(s)
     p = api.request(F_MEMORY_GET_ID)
     ident["homeId"] = p[0:4].hex().upper()
-    ident["ownNodeId"] = p[4]
+    ident["ownNodeId"] = node_id_from(p, 4)
     flags = api.request(F_GET_CTRL_CAPS)[0]
     ident["controllerCapabilityFlags"] = flags
     ident["isSecondary"] = bool(flags & 0x01)
@@ -414,13 +497,20 @@ def read_identity(api):
     ident["sisPresent"] = bool(flags & 0x04)
     ident["wasRealPrimary"] = bool(flags & 0x08)
     ident["isSUC"] = bool(flags & 0x10)
-    ident["sucNodeId"] = api.request(F_GET_SUC_NODE_ID)[0]
+    ident["sucNodeId"] = node_id_from(api.request(F_GET_SUC_NODE_ID), 0)
     p = api.request(F_GET_SERIALAPI_CAPS)
     ident["serialApiVersion"] = f"{p[0]}.{p[1]}"
     ident["manufacturerId"] = int.from_bytes(p[2:4], "big")
     ident["productType"] = int.from_bytes(p[4:6], "big")
     ident["productId"] = int.from_bytes(p[6:8], "big")
     ident["modelName"] = model_name(ident["manufacturerId"], ident["productType"], ident["productId"])
+    ident["supportedFunctionIds"] = parse_function_bitmask(p)
+    ident["protocolVersionFull"] = None
+    if is_700_series(ident) and F_GET_PROTOCOL_VER in ident["supportedFunctionIds"]:
+        # [protocol type, major, minor, patch, build (2), git hash (16)]; only the version matters here
+        p = api.request(F_GET_PROTOCOL_VER)
+        if len(p) >= 4:
+            ident["protocolVersionFull"] = f"{p[1]}.{p[2]}.{p[3]}"
     p = api.request(F_GET_INIT_DATA)
     ident["initApiVersion"] = p[0]
     caps = p[1]
@@ -545,6 +635,193 @@ def soft_reset(api):
 
 
 # ---------------------------------------------------------------------------
+# 700 and 800 series: NVM3 through NVMOperations (0x2E) / ExtendedNVMOperations (0x3D)
+# ---------------------------------------------------------------------------
+
+def radio_off(api):
+    """Silence the radio so the protocol cannot write to the NVM while it is being copied."""
+    resp = api.request(F_SET_RF_RECEIVE_MODE, b"\x00")
+    return bool(resp) and resp[0] == 1
+
+
+def radio_on(api):
+    resp = api.request(F_SET_RF_RECEIVE_MODE, b"\x01")
+    return bool(resp) and resp[0] == 1
+
+
+def stop_watchdog(api):
+    """The hardware watchdog would reset the stick mid-transfer; it has no response frame."""
+    return api.send(F_STOP_WATCHDOG)
+
+
+def begin_nvm_session_700(api):
+    """Radio off and watchdog stopped, as zwave-js does before any NVM access. Raises if
+    the radio will not go quiet: copying a live NVM is not worth having."""
+    if not radio_off(api):
+        raise RuntimeError("the controller would not switch its radio off before the memory access")
+    stop_watchdog(api)
+
+
+def end_nvm_session_700(api, timeout=8.0):
+    """Soft reset, then wait for the stick to say it is back (SerialAPIStarted). The reset
+    is what puts the NVM right again after a read and turns the radio and watchdog back
+    on; there is no other way out of the session. Returns True once the stick announced
+    itself, False if it merely went quiet (a replug then does the same job)."""
+    if not api.send(F_SOFT_RESET):
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        kind, fr = api._next_event(min(0.5, max(0.0, deadline - time.monotonic())))
+        if kind == "frame" and fr["func"] == F_SERIAL_API_STARTED:
+            return True
+    return False
+
+
+class Nvm700:
+    """One NVM3 conversation with a 700+ stick over `func` (0x2E or 0x3D). The offset is two
+    bytes on 0x2E and four on 0x3D, in both the request and the response."""
+
+    def __init__(self, api, func=F_EXT_NVM_OPERATIONS):
+        self.api = api
+        self.func = func
+        self.offset_width = 4 if func == F_EXT_NVM_OPERATIONS else 2
+
+    def _call(self, op, payload=b""):
+        resp = self.api.request(self.func, bytes([op]) + payload)
+        if len(resp) < 2:
+            raise RuntimeError(f"NVM operation {op} got a {len(resp)}-byte reply")
+        status, dlen = resp[0], resp[1]
+        w = self.offset_width
+        offset = int.from_bytes(resp[2:2 + w], "big") if len(resp) >= 2 + w else 0
+        data = resp[2 + w:2 + w + dlen]
+        if status not in (NVM_ST_OK, NVM_ST_EOF):
+            raise RuntimeError(f"NVM operation {op} failed: {NVM_STATUS_NAMES.get(status, status)}")
+        return status, offset, data
+
+    def open(self):
+        """Returns the NVM size in bytes."""
+        _status, size, _data = self._call(NVM_OP_OPEN)
+        if size <= 0:
+            raise RuntimeError("the controller reported an empty NVM")
+        return size
+
+    def read(self, offset, length):
+        return self._call(NVM_OP_READ, bytes([length]) + offset.to_bytes(self.offset_width, "big"))
+
+    def write(self, offset, piece):
+        return self._call(NVM_OP_WRITE, bytes([len(piece)]) + offset.to_bytes(self.offset_width, "big") + piece)
+
+    def close(self):
+        self._call(NVM_OP_CLOSE)
+
+
+def read_nvm_id_700(api, func):
+    """The 700+ counterpart of read_nvm_id: open the NVM for its size and close it again."""
+    nvm = Nvm700(api, func)
+    size = nvm.open()
+    nvm.close()
+    return {"sizeBytes": size, "function": f"0x{func:02X}", "nvmManufacturerId": None, "memoryType": "NVM3"}
+
+
+def dump_nvm_700(api, func, size, progress=None, should_stop=None):
+    """Read the whole NVM3 area, exactly as zwave-js backupNVMRaw700: ask for 255 bytes, take
+    whatever chunk the stick answers with, drop to 48 if it answers with nothing."""
+    nvm = Nvm700(api, func)
+    opened = nvm.open()
+    if opened != size:
+        nvm.close()
+        raise RuntimeError(f"the NVM is {opened} bytes now but was {size} bytes a moment ago")
+    data = bytearray()
+    chunk = min(NVM700_PROBE, size)
+    next_pct = 10
+    try:
+        while len(data) < size:
+            if should_stop and should_stop():
+                raise RuntimeError("stopped")
+            status, offset, piece = nvm.read(len(data), min(chunk, size - len(data)))
+            if not piece:
+                if chunk == NVM700_PROBE:
+                    chunk = NVM700_FALLBACK_CHUNK
+                    continue
+                raise RuntimeError(f"NVM read at offset {len(data)} returned nothing")
+            if offset != len(data):
+                raise RuntimeError(f"NVM read came back for offset {offset}, not {len(data)}")
+            data += piece
+            if chunk > len(piece):
+                chunk = len(piece)
+            if progress and len(data) * 100 // size >= next_pct:
+                progress(len(data), size)
+                next_pct += 10
+            if status == NVM_ST_EOF:
+                break
+    finally:
+        nvm.close()
+    if len(data) != size:
+        raise RuntimeError(f"read {len(data)} of {size} bytes before the controller said end of file")
+    return bytes(data)
+
+
+def write_nvm_700(api, func, image, progress=None, should_stop=None):
+    """Write `image` back, exactly as zwave-js restoreNVMRaw700: probe the chunk with one read,
+    then write chunk by chunk. Returns (bytes written, bytes the controller declined at the
+    end). The final chunk, the one that reaches the end of the NVM, is answered 'end of
+    file' and is not written; that is how these sticks behave and it is left alone. It is
+    NEVER split and retried: a one-byte write at the end hung a ZST39 (14-09-2026)."""
+    nvm = Nvm700(api, func)
+    size = nvm.open()
+    if size != len(image):
+        nvm.close()
+        raise RuntimeError(f"the image is {len(image)} bytes but the controller's NVM is {size}")
+    _s, _o, probe = nvm.read(0, min(NVM700_PROBE, size))
+    chunk = len(probe) or NVM700_FALLBACK_CHUNK
+    nvm.close()
+    nvm.open()
+    offset = 0
+    declined = 0
+    next_pct = 10
+    try:
+        while offset < len(image):
+            if should_stop and should_stop():
+                raise RuntimeError("stopped")
+            piece = image[offset:offset + chunk]
+            status, _echo, _d = nvm.write(offset, piece)
+            if status == NVM_ST_EOF:
+                declined = len(image) - offset
+                offset = len(image)
+                break
+            offset += len(piece)
+            if progress and offset * 100 // len(image) >= next_pct:
+                progress(offset, len(image))
+                next_pct += 10
+    finally:
+        nvm.close()
+    return offset - declined, declined
+
+
+def compare_images_700(image, current, declined_tail=0):
+    """Compare a 700+ image with a later read of the same stick, allowing for what this
+    generation does on its own: it appends housekeeping objects into erased (0xFF) space when
+    it restarts, and it never writes the final chunk of a restore. Returns the plain diff plus
+    how many differing bytes fall into each of those two allowances; `unexplained` is what is
+    left, and that is the number that decides whether a restore held."""
+    diff = compare_images(image, current)
+    tail_start = len(image) - declined_tail
+    housekeeping = tail = unexplained = 0
+    for i, (x, y) in enumerate(zip(image, current)):
+        if x == y:
+            continue
+        if i >= tail_start:
+            tail += 1
+        elif x == 0xFF:
+            housekeeping += 1
+        else:
+            unexplained += 1
+    unexplained += abs(len(image) - len(current))
+    diff.update(housekeepingBytes=housekeeping, tailBytes=tail, unexplainedBytes=unexplained)
+    return diff
+
+
+# ---------------------------------------------------------------------------
 # Image checks, sidecars, guards
 # ---------------------------------------------------------------------------
 
@@ -652,6 +929,12 @@ def restore_refusals(image, sidecar, identity, nvm, replacement_ok=False):
         reasons.append(
             f"the image came from software '{ident_img.get('libraryVersionString')}' and this controller runs "
             f"'{identity.get('libraryVersionString')}'; the memory layout differs between versions")
+    elif ident_img.get("protocolVersionFull") and identity.get("protocolVersionFull") \
+            and ident_img["protocolVersionFull"] != identity["protocolVersionFull"]:
+        # 700+ sticks say "7.17" in the library string and "7.17.1" in full; the full one is the layout
+        reasons.append(
+            f"the image came from SDK {ident_img['protocolVersionFull']} and this controller runs "
+            f"SDK {identity['protocolVersionFull']}; the memory layout can differ between those")
     if ident_img.get("homeId") != identity.get("homeId") and not replacement_ok:
         reasons.append(
             f"the image is for Home ID {ident_img.get('homeId')} and this controller is {identity.get('homeId')}; "
@@ -662,6 +945,28 @@ def restore_refusals(image, sidecar, identity, nvm, replacement_ok=False):
 # ---------------------------------------------------------------------------
 # Indigo's own Z-Wave settings (read, never written)
 # ---------------------------------------------------------------------------
+
+def clean_folder_path(text):
+    """A folder path as a person typed or pasted it: surrounding quotes and whitespace dropped,
+    `~` expanded. Returns "" for blank, and for anything that is not an absolute path, because
+    a relative path would land the images inside the plugin bundle (seen 14-09-2026 with a
+    path pasted in shell quotes)."""
+    folder = (text or "").strip().strip("'\"").strip()
+    if not folder:
+        return ""
+    folder = os.path.expanduser(folder)
+    return folder if os.path.isabs(folder) else ""
+
+
+def zwave_home_ids_from_prefs(pref_path):
+    """Every Home ID Indigo's Z-Wave prefs mention. Old networks linger there for years, so
+    the stick's Home ID is checked against the set, never against the first one found."""
+    try:
+        root = ET.parse(pref_path).getroot()
+    except (OSError, ET.ParseError):
+        return set()
+    return {m.group(1) for el in root.iter() for m in [re.fullmatch(r"Home([0-9A-F]{8})_Node\d+", el.tag or "")] if m}
+
 
 def zwave_port_from_prefs(pref_path):
     """(port, connection_type, home_id) from Indigo's Z-Wave prefs file, or (None, None, None)."""
