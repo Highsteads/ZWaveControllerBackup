@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 # Filename:    plugin.py
 # Description: Z-Wave Controller Backup. Takes a complete, verified image of a
-#              500-series Z-Wave USB controller's memory (Home ID, node table,
-#              routes) and can write it back. Indigo has to let go of the stick
-#              while that happens, so the plugin waits for the user to switch
-#              Z-Wave off, does the job, and says when to switch it back on.
-# Author:      CliveS & Claude Fable 5.1
-# Date:        13-09-2026 17:45
-# Version:     1.0.2
+#              500, 700 or 800 series Z-Wave USB controller's memory (Home ID,
+#              node table, routes) and can write it back. Indigo has to let go of
+#              the stick while that happens, so the plugin waits for the user to
+#              switch Z-Wave off, does the job, and says when to switch it back on.
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
+# Date:        14-09-2026 16:30
+# Version:     1.1.0
 
 try:
     import indigo
@@ -41,7 +41,7 @@ import controller_image as ci
 # ============================================================
 
 PLUGIN_ID = "com.clives.indigoplugin.zwave-controller-backup"
-PLUGIN_VERSION = "1.0.2"
+PLUGIN_VERSION = "1.1.0"
 DEVICE_TYPE = "zwaveController"
 DEFAULT_FOLDER_NAME = "Z-Wave Controller Backups"
 POLL_SECONDS = 2
@@ -63,8 +63,10 @@ version; the plugin refuses anything else, because the memory layout differs bet
 versions.
 
 Fallback without the plugin: the zwave-js library's `controller.restoreNVMRaw()` writes the
-same bytes back (never `restoreNVM()`, which tries to convert). See mat's write-up on the
-Indigo forum, topic 29135, for a ready-made script.
+same bytes back. See mat's write-up on the Indigo forum, topic 29135, for a ready-made
+script. Moving a network onto a different generation of stick (500 to 700, 700 to 800) is
+a conversion, not a raw restore: zwave-js's `restoreNVM()` or its `nvmedit convert` tool
+does that, and these images are exactly the input it takes.
 
 Take a fresh copy whenever a device is added to or removed from the network.
 """
@@ -90,6 +92,7 @@ class Plugin(indigo.PluginBase):
         self._network_flag = False
         self._final_status = None
         self._shadow = {}            # last states written, for when no device exists yet
+        self._session_open = False   # a 700/800 stick has its radio off and needs the closing reset
         self._read_prefs(pluginPrefs)
 
     # --------------------------------------------------------
@@ -97,7 +100,10 @@ class Plugin(indigo.PluginBase):
     # --------------------------------------------------------
 
     def _read_prefs(self, prefs):
-        folder = (prefs.get("backupFolder") or "").strip()
+        raw = prefs.get("backupFolder") or ""
+        folder = ci.clean_folder_path(raw)
+        if raw.strip() and not folder:
+            self.logger.warning(f"The backup folder setting '{raw.strip()}' is not a full path; using the default folder instead.")
         self.backup_folder = folder or self._default_folder()
         self.port_override = (prefs.get("portOverride") or "").strip()
         try:
@@ -133,8 +139,12 @@ class Plugin(indigo.PluginBase):
                 raise ValueError
         except (ValueError, TypeError):
             errors["waitMinutes"] = "Whole minutes between 1 and 60."
-        folder = (valuesDict.get("backupFolder") or "").strip()
-        if folder:
+        raw = (valuesDict.get("backupFolder") or "").strip()
+        folder = ci.clean_folder_path(raw)
+        if raw and not folder:
+            errors["backupFolder"] = "Enter the full path of a folder, starting with / (or ~), without quotes."
+        elif folder:
+            valuesDict["backupFolder"] = folder        # keep what was meant, not the quotes around it
             try:
                 _os.makedirs(folder, exist_ok=True)
             except OSError as e:
@@ -531,21 +541,55 @@ class Plugin(indigo.PluginBase):
         self.logger.info(f"Z-Wave is off. Opening {port_path}.")
         self._set(actionRequired=False, backupStatus=f"{name.capitalize()} in progress")
         port, api = self._open(port_path)
+        self._session_open = False
         try:
             identity = ci.read_identity(api)
-            if not ci.is_500_series(identity):
+            if ci.is_500_series(identity):
+                nvm = ci.read_nvm_id(api)
+            elif ci.is_700_series(identity):
+                # 700/800: radio off + watchdog stopped for the whole visit, soft reset on the way out.
+                self._session_begin(api)
+                nvm = ci.read_nvm_id_700(api, ci.nvm_function_for(identity))
+            else:
                 self.logger.error(
-                    f"This controller reports '{identity.get('libraryVersionString')}', which is a 700 or 800 series stick. "
-                    f"Version {PLUGIN_VERSION} images 500-series controllers only.")
+                    f"This controller reports '{identity.get('libraryVersionString')}', which the plugin does not recognise "
+                    f"as a 500, 700 or 800 series stick.")
                 self._final_status = f"{name.capitalize()} failed"
                 return False
-            nvm = ci.read_nvm_id(api)
             return body(port_path, port, api, identity, nvm)
         finally:
+            try:
+                self._session_end(api)
+            except Exception as e:
+                self.logger.debug(f"could not reset the controller on the way out: {e}")
             try:
                 port.close()
             except Exception:
                 pass
+
+    def _session_begin(self, api):
+        ci.begin_nvm_session_700(api)
+        self._session_open = True
+
+    def _session_end(self, api):
+        """Soft-reset a 700/800 stick (radio and watchdog come back with it). No-op otherwise."""
+        if not self._session_open:
+            return
+        self._session_open = False
+        if not ci.end_nvm_session_700(api):
+            self.logger.warning("The controller did not announce itself after the reset. If Indigo cannot reconnect, unplug and replug the stick.")
+
+    @staticmethod
+    def _series(identity):
+        return ci.series_of(identity) or 500
+
+    def _dump(self, api, identity, nvm, label):
+        """One full read of the controller, whichever generation it is."""
+        if self._series(identity) >= 700:
+            return ci.dump_nvm_700(api, ci.nvm_function_for(identity), nvm["sizeBytes"],
+                                   progress=self._progress(label), should_stop=self._stop.is_set)
+        return ci.dump_nvm(api, nvm["sizeBytes"], ci.initial_chunk_for(identity),
+                           progress=self._progress(label), should_stop=self._stop.is_set)
 
     def _progress(self, label):
         def cb(done, total):
@@ -587,17 +631,20 @@ class Plugin(indigo.PluginBase):
 
     def _backup_body(self, port_path, port, api, identity, nvm):
         size = nvm["sizeBytes"]
-        _p, _c, prefs_home = ci.zwave_port_from_prefs(self._zwave_prefs_path())
-        if prefs_home and prefs_home != identity["homeId"]:
-            self.logger.warning(f"The stick's Home ID is {identity['homeId']} but Indigo's Z-Wave settings name {prefs_home}. Imaging the stick as it is.")
+        known_homes = ci.zwave_home_ids_from_prefs(self._zwave_prefs_path())
+        if known_homes and identity["homeId"] not in known_homes:
+            self.logger.warning(
+                f"The stick's Home ID is {identity['homeId']} but Indigo's Z-Wave settings only know "
+                f"{', '.join(sorted(known_homes))}. Imaging the stick as it is.")
         nodes = [n for n in identity["nodeIds"] if n != identity["ownNodeId"]]
+        series = self._series(identity)
+        how_long = "about twenty seconds" if series >= 700 else "about a minute"
         self.logger.info(
-            f"Reading {identity['modelName']}, Home ID {identity['homeId']}, {ci.software_description(identity)}, "
-            f"{len(nodes)} nodes, {size // 1024} KB of memory. Two full reads, about a minute.")
-        chunk = ci.initial_chunk_for(identity)
+            f"Reading {identity['modelName']} ({series} series), Home ID {identity['homeId']}, {ci.software_description(identity)}, "
+            f"{len(nodes)} nodes, {size // 1024} KB of memory. Two full reads, {how_long}.")
         t0 = time.monotonic()
-        img1 = ci.dump_nvm(api, size, chunk, progress=self._progress("read 1"), should_stop=self._stop.is_set)
-        img2 = ci.dump_nvm(api, size, chunk, progress=self._progress("read 2"), should_stop=self._stop.is_set)
+        img1 = self._dump(api, identity, nvm, "read 1")
+        img2 = self._dump(api, identity, nvm, "read 2")
         diff = ci.compare_images(img1, img2)
         checks, problems = ci.image_checks(img1, size, identity["homeId"])
         if diff["differingBytes"]:
@@ -640,9 +687,28 @@ class Plugin(indigo.PluginBase):
         with open(self._last_path, "rb") as fh:
             image = fh.read()
         self.logger.info(f"Reading the controller to compare with {_os.path.basename(self._last_path)}.")
-        current = ci.dump_nvm(api, nvm["sizeBytes"], ci.initial_chunk_for(identity),
-                              progress=self._progress("verify read"), should_stop=self._stop.is_set)
-        diff = ci.compare_images(image, current)
+        current = self._dump(api, identity, nvm, "verify read")
+        if self._series(identity) >= 700:
+            # NVM3 only ever appends: routes the stick learns and its housekeeping land in erased space, and
+            # nothing the image holds is overwritten until the stick compacts a page. So free-space additions
+            # are normal; an overwritten byte, or a node table that differs, is a real change.
+            diff = ci.compare_images_700(image, current)
+            image_nodes = sorted(self._last.get("identity", {}).get("nodeIds", []))
+            if diff["unexplainedBytes"] == 0 and sorted(identity.get("nodeIds", [])) == image_nodes:
+                note = (f" ({diff['housekeepingBytes']} bytes have been added in free space since: routes the controller "
+                        f"has learnt and its own housekeeping, which this generation writes on its own; the node table is "
+                        f"the same and nothing the image holds has been overwritten)"
+                        if diff["differingBytes"] else " byte for byte")
+                self.logger.info(f"Verified: the controller's memory matches the last backup{note}.")
+                self._final_status = f"Backed up {self._pretty(self._last['takenAt'])}, verified"
+                self._set(lastResult="verify ok: matches the last backup")
+                return True
+            if sorted(identity.get("nodeIds", [])) != image_nodes:
+                diff["differingBytes"] = max(diff["differingBytes"], 1)
+                self.logger.warning(
+                    f"The controller now lists {len(identity.get('nodeIds', []))} nodes where the last backup has {len(image_nodes)}.")
+        else:
+            diff = ci.compare_images(image, current)
         if diff["differingBytes"] == 0:
             self.logger.info("Verified: the controller's memory matches the last backup byte for byte.")
             self._final_status = f"Backed up {self._pretty(self._last['takenAt'])}, verified"
@@ -673,6 +739,8 @@ class Plugin(indigo.PluginBase):
             self._final_status = "Restore refused"
             self._set(lastResult="restore refused: " + "; ".join(reasons))
             return False
+        if self._series(identity) >= 700:
+            return self._restore_body_700(port_path, port, api, identity, nvm, path, image, side)
         self.logger.info(
             f"Writing {_os.path.basename(path)} ({len(image)} bytes) into {identity['modelName']}, Home ID {identity['homeId']}. "
             f"Do not unplug anything yet.")
@@ -718,6 +786,53 @@ class Plugin(indigo.PluginBase):
             f"(Home ID now {ident2.get('homeId')}). Do not switch Z-Wave back on yet. Run Restore again, or restore your previous image.")
         self._final_status = "Restore failed"
         self._set(lastResult=f"restore failed: read-back differs in {diff['differingBytes']} bytes")
+        return False
+
+    def _restore_body_700(self, port_path, port, api, identity, nvm, path, image, side):
+        """700/800: write, soft reset (no unplug needed, the reset is the documented step), read
+        back straight away and compare with the two allowances this generation needs."""
+        func = ci.nvm_function_for(identity)
+        self.logger.info(
+            f"Writing {_os.path.basename(path)} ({len(image)} bytes) into {identity['modelName']}, Home ID {identity['homeId']}. "
+            f"Do not unplug anything.")
+        written, declined = ci.write_nvm_700(api, func, image, progress=self._progress("write"), should_stop=self._stop.is_set)
+        if declined:
+            self.logger.info(
+                f"The controller answered 'end of file' to the final {declined} bytes and did not write them, which is how "
+                f"this generation behaves (zwave-js sees the same). Those bytes hold nothing any of its files refer to; "
+                f"the plugin leaves them alone rather than forcing them, which is known to hang the stick.")
+        self.logger.info(f"Written {written} bytes. Resetting the controller and reading it back.")
+        self._session_end(api)                       # soft reset: the stick reloads its NVM3 files from what was written
+        self._session_begin(api)
+        current = self._dump(api, identity, nvm, "read-back")
+        ident2 = ci.read_identity(api)
+        diff = ci.compare_images_700(image, current, declined)
+        want_nodes = sorted(side["identity"].get("nodeIds", []))
+        got_nodes = sorted(ident2.get("nodeIds", []))
+        if diff["unexplainedBytes"] == 0 and ident2.get("homeId") == side["identity"].get("homeId") and got_nodes == want_nodes:
+            extra = []
+            if diff["housekeepingBytes"]:
+                extra.append(f"{diff['housekeepingBytes']} bytes of housekeeping the controller wrote into free space on restart")
+            if diff["tailBytes"]:
+                extra.append(f"the {diff['tailBytes']} unwritten bytes at the end")
+            note = f" (the only differences are {' and '.join(extra)})" if extra else " byte for byte"
+            self.logger.info(
+                f"Restore verified: everything the image holds is in the controller{note}, Home ID {ident2['homeId']}, "
+                f"{len([n for n in got_nodes if n != ident2['ownNodeId']])} nodes as in the image.")
+            self._final_status = f"Restored {self._pretty(side.get('takenAt', ''))}, verified"
+            self._set(lastResult="restore ok: read-back matches the image", **self._identity_states(ident2))
+            return True
+        why = []
+        if diff["unexplainedBytes"]:
+            why.append(f"the read-back differs from the image in {diff['unexplainedBytes']} bytes that are not housekeeping (first difference at offset {diff['firstDifference']})")
+        if ident2.get("homeId") != side["identity"].get("homeId"):
+            why.append(f"the Home ID is now {ident2.get('homeId')}, not {side['identity'].get('homeId')}")
+        if got_nodes != want_nodes:
+            why.append(f"the controller lists {len(got_nodes)} nodes where the image has {len(want_nodes)}")
+        self.logger.error(
+            f"Restore did NOT hold: {'; '.join(why)}. Do not switch Z-Wave back on yet. Run Restore again, or restore your previous image.")
+        self._final_status = "Restore failed"
+        self._set(lastResult="restore failed: " + "; ".join(why))
         return False
 
     def _wait_for_replug(self, port_path):

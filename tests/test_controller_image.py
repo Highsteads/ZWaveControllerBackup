@@ -6,8 +6,8 @@
 #              traffic, identity from Gen5-shaped payloads, adaptive reads, the
 #              write path, image checks, sidecars and every restore guard.
 # Author:      CliveS & Claude Fable 5.1
-# Date:        13-09-2026 12:35
-# Version:     1.0.0
+# Date:        14-09-2026 16:30
+# Version:     1.1.0
 
 import datetime
 import json
@@ -15,7 +15,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fake_stick import GEN5, FakeStick, ci, request_frame, response_frame  # noqa: E402
+from fake_stick import GEN5, STICK700, ZST39, FakeStick, FakeStick700, ci, request_frame, response_frame  # noqa: E402
 
 
 def api_for(stick):
@@ -305,6 +305,30 @@ def test_zwave_port_and_home_id_read_from_indigo_prefs(tmp_path):
     assert ci.zwave_port_from_prefs(os.path.join(tmp_path, "missing")) == (None, None, None)
 
 
+def test_every_home_id_in_indigo_prefs_is_known_not_just_the_first(tmp_path):
+    """A real prefs file (14-09-2026) carried five Home IDs from past networks; the first was
+    not the live one, and the plugin warned about a mismatch that was not there."""
+    pref = os.path.join(tmp_path, "zwave.indiPref")
+    with open(pref, "w") as fh:
+        fh.write('<?xml version="1.0"?><Prefs type="dict">'
+                 '<Home0161EC56_Node003 type="bool">true</Home0161EC56_Node003>'
+                 '<HomeE1C3BDE8_Node012 type="bool">true</HomeE1C3BDE8_Node012>'
+                 '<HomeE1C3BDE8_Node013 type="bool">true</HomeE1C3BDE8_Node013>'
+                 '</Prefs>')
+    assert ci.zwave_home_ids_from_prefs(pref) == {"0161EC56", "E1C3BDE8"}
+    assert ci.zwave_home_ids_from_prefs(os.path.join(tmp_path, "missing")) == set()
+
+
+def test_folder_path_is_cleaned_and_must_be_absolute():
+    """Pasted in shell quotes, a relative path put the images inside the plugin bundle (14-09-2026)."""
+    assert ci.clean_folder_path("'/Users/me/Z-Wave Backups'") == "/Users/me/Z-Wave Backups"
+    assert ci.clean_folder_path('  "/Users/me/x"  ') == "/Users/me/x"
+    assert ci.clean_folder_path("~/x").startswith("/") and ci.clean_folder_path("~/x").endswith("/x")
+    assert ci.clean_folder_path("relative/path") == ""
+    assert ci.clean_folder_path("'relative'") == ""
+    assert ci.clean_folder_path("") == "" and ci.clean_folder_path(None) == ""
+
+
 def test_port_holders_is_empty_when_lsof_is_unavailable(monkeypatch):
     monkeypatch.setattr(ci, "LSOF", "/nonexistent/lsof")
     assert ci.port_holders("/dev/cu.nothing") == []
@@ -422,3 +446,160 @@ def test_request_failure_names_what_happened():
         assert "2 attempts" in str(e) and "no reply" in str(e)
     else:
         raise AssertionError("must raise")
+
+
+# ---------------------------------------------------------------- 700 / 800 series
+
+def test_identity_from_zst39_shaped_payloads():
+    ident = ci.read_identity(api_for(FakeStick700()))
+    assert ident["libraryVersionString"] == "Z-Wave 7.24"
+    assert ident["protocolVersionFull"] == "7.24.2"
+    assert ident["homeId"] == "E2DAD17B" and ident["ownNodeId"] == 1 and ident["sucNodeId"] == 1
+    assert ident["modelName"] == "Zooz ZST39 LR"
+    assert (ident["chipType"], ident["chipVersion"]) == (8, 0)
+    assert ident["nodeIds"] == ZST39["nodes"]
+    assert 0x2E in ident["supportedFunctionIds"] and 0x3D in ident["supportedFunctionIds"]
+    assert not ci.is_500_series(ident) and ci.is_700_series(ident)
+    assert ci.series_of(ident) == 800
+    assert ci.nvm_function_for(ident) == ci.F_EXT_NVM_OPERATIONS
+    assert ci.software_description(ident) == "Z-Wave 7.24 (SDK 7.24.2)"
+
+
+def test_identity_from_a_700_stick_uses_the_16_bit_function():
+    ident = ci.read_identity(api_for(FakeStick700(profile=STICK700)))
+    assert ident["libraryVersionString"] == "Z-Wave 7.17" and ident["protocolVersionFull"] == "7.17.1"
+    assert ci.series_of(ident) == 700
+    assert 0x3D not in ident["supportedFunctionIds"]
+    assert ci.nvm_function_for(ident) == ci.F_NVM_OPERATIONS
+    assert ident["modelName"] == "Silicon Labs 700 series stick"
+
+
+def test_node_ids_are_parsed_by_length_in_16_bit_mode():
+    """zwave-js leaves 700+ sticks in 16-bit node id mode; MemoryGetId then answers 6 bytes."""
+    ident = ci.read_identity(api_for(FakeStick700(node_id_bits=16)))
+    assert ident["ownNodeId"] == 1 and ident["sucNodeId"] == 1
+    assert ci.node_id_from(bytes.fromhex("e2dad17b01"), 4) == 1
+    assert ci.node_id_from(bytes.fromhex("e2dad17b0001"), 4) == 1
+    assert ci.node_id_from(bytes.fromhex("e2dad17b0102"), 4) == 0x0102
+
+
+def test_function_bitmask_bit_n_minus_1_is_function_n():
+    caps = bytes(8) + bytes([0b00000001, 0b10000000]) + bytes(30)
+    assert ci.parse_function_bitmask(caps) == [1, 16]
+
+
+def test_500_series_identity_is_unchanged_by_the_new_fields():
+    ident = ci.read_identity(api_for(FakeStick()))
+    assert ident["protocolVersionFull"] is None and ident["supportedFunctionIds"] == []
+    assert ci.series_of(ident) == 500 and not ci.is_700_series(ident)
+
+
+def test_nvm_session_turns_the_radio_off_and_the_reset_brings_the_stick_back():
+    stick = FakeStick700()
+    api = api_for(stick)
+    ci.begin_nvm_session_700(api)
+    assert not stick.radio_on and not stick.watchdog_on
+    assert ci.end_nvm_session_700(api) is True          # SerialAPIStarted seen
+    assert stick.radio_on and stick.watchdog_on and stick.resets == 1
+
+
+def test_dump_700_reads_the_whole_nvm_in_the_sticks_chunk_via_0x3d():
+    stick = FakeStick700()
+    api = api_for(stick)
+    size = ci.read_nvm_id_700(api, ci.F_EXT_NVM_OPERATIONS)["sizeBytes"]
+    assert size == 40960
+    img = ci.dump_nvm_700(api, ci.F_EXT_NVM_OPERATIONS, size)
+    assert img == bytes(stick.nvm)
+    reads = [pl for f, pl in stick.requests if f == ci.F_EXT_NVM_OPERATIONS and pl[0] == ci.NVM_OP_READ]
+    assert reads[0][1] == 0xFF and reads[1][1] == 64          # probe, then the stick's chunk
+    assert stick.requests[-1] == (ci.F_EXT_NVM_OPERATIONS, bytes([ci.NVM_OP_CLOSE]))
+
+
+def test_dump_700_via_0x2e_uses_two_byte_offsets():
+    stick = FakeStick700(profile=STICK700)
+    api = api_for(stick)
+    size = ci.read_nvm_id_700(api, ci.F_NVM_OPERATIONS)["sizeBytes"]
+    img = ci.dump_nvm_700(api, ci.F_NVM_OPERATIONS, size)
+    assert img == bytes(stick.nvm) and len(img) == 49152
+    reads = [pl for f, pl in stick.requests if f == ci.F_NVM_OPERATIONS and pl[0] == ci.NVM_OP_READ]
+    assert len(reads[1]) == 1 + 1 + 2 and int.from_bytes(reads[1][2:4], "big") == 64
+
+
+def test_dump_700_falls_back_to_48_when_the_probe_comes_back_empty():
+    stick = FakeStick700()
+    stick.empty_probe_replies = 1
+    api = api_for(stick)
+    img = ci.dump_nvm_700(api, ci.F_EXT_NVM_OPERATIONS, 40960)
+    assert img == bytes(stick.nvm)
+    reads = [pl for f, pl in stick.requests if f == ci.F_EXT_NVM_OPERATIONS and pl[0] == ci.NVM_OP_READ]
+    assert reads[1][1] == 48
+
+
+def test_dump_700_refuses_a_size_that_moved():
+    import pytest
+    with pytest.raises(RuntimeError):
+        ci.dump_nvm_700(api_for(FakeStick700()), ci.F_EXT_NVM_OPERATIONS, 12345)
+
+
+def test_write_700_lands_every_byte_but_the_declined_tail_and_never_touches_the_last_two():
+    stick = FakeStick700()
+    original = bytes(stick.nvm)
+    image = bytearray(original)
+    for i in range(20, 4000):
+        image[i] ^= 0x5A
+    api = api_for(stick)
+    written, declined = ci.write_nvm_700(api, ci.F_EXT_NVM_OPERATIONS, bytes(image))
+    assert (written, declined) == (40960 - 64, 64)
+    assert stick.tail_writes_declined == 1
+    assert not stick.hung                                   # no split-and-retry into the tail
+    assert bytes(stick.nvm[:-64]) == bytes(image[:-64])
+    assert bytes(stick.nvm[-64:]) == original[-64:]         # the tail is what it was
+    writes = [pl for f, pl in stick.requests if f == ci.F_EXT_NVM_OPERATIONS and pl[0] == ci.NVM_OP_WRITE]
+    assert all(pl[1] == 64 for pl in writes)
+
+
+def test_write_700_refuses_an_image_of_the_wrong_size():
+    import pytest
+    with pytest.raises(RuntimeError):
+        ci.write_nvm_700(api_for(FakeStick700()), ci.F_EXT_NVM_OPERATIONS, b"\xff" * 100)
+
+
+def test_a_write_into_the_tail_would_hang_the_fake_as_it_hung_the_real_stick():
+    """Documents the hazard the write path is built to avoid."""
+    stick = FakeStick700()
+    nvm = ci.Nvm700(api_for(stick))
+    nvm.open()
+    import pytest
+    with pytest.raises(RuntimeError):
+        nvm.write(40960 - 2, b"\x00")
+    assert stick.hung
+
+
+def test_compare_700_explains_housekeeping_and_tail_but_not_real_differences():
+    image = bytes([0x11] * 100 + [0xFF] * 50 + [0x22] * 64)
+    current = bytearray(image)
+    current[110:120] = b"\xd7" * 10               # the firmware wrote into erased space
+    current[-64:] = b"\xff" * 64                   # the declined tail
+    d = ci.compare_images_700(image, bytes(current), declined_tail=64)
+    assert (d["housekeepingBytes"], d["tailBytes"], d["unexplainedBytes"]) == (10, 64, 0)
+    current[5] = 0x00                              # a real difference
+    d = ci.compare_images_700(image, bytes(current), declined_tail=64)
+    assert d["unexplainedBytes"] == 1 and d["firstDifference"] == 5
+    assert ci.compare_images_700(image, image)["differingBytes"] == 0
+
+
+def test_restore_guard_refuses_a_different_full_sdk_on_the_same_library_string(tmp_path):
+    ident = ci.read_identity(api_for(FakeStick700()))
+    nvm = {"sizeBytes": 40960}
+    image = b"\xff" * 40960
+    side = {"identity": dict(ident)}
+    assert ci.restore_refusals(image, side, ident, nvm) == []
+    side["identity"]["protocolVersionFull"] = "7.19.0"
+    reasons = ci.restore_refusals(image, side, ident, nvm)
+    assert len(reasons) == 1 and "7.19.0" in reasons[0]
+
+
+def test_image_checks_pass_on_an_nvm3_shaped_image():
+    stick = FakeStick700()
+    checks, problems = ci.image_checks(bytes(stick.nvm), 40960, "E2DAD17B")
+    assert problems == [] and checks["homeIdOccurrences"] >= 1

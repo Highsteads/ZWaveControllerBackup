@@ -1,6 +1,6 @@
 # Z-Wave Controller Backup
 
-**Version:** 1.0.2 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
+**Version:** 1.1.0 | **Author:** CliveS & Claude | **Platform:** Indigo 2025.2 or later, macOS
 
 Takes a complete copy of your Z-Wave USB controller's memory, checks it, keeps it, and can put
 it back. Two clicks and about two minutes, from inside Indigo, on the Mac it already runs on.
@@ -8,10 +8,10 @@ it back. Two clicks and about two minutes, from inside Indigo, on the Mac it alr
 ## Why
 
 The stick that runs your Z-Wave network keeps the only copy of what that network is: the
-Home ID, the list of devices, the routes between them. A 500-series stick can lose that list.
-When it does, every device is still on the network and still bound to the same Home ID, but
-the stick no longer knows any of them, and Indigo's only documented remedy is to exclude and
-include every device again. mat on the Indigo forum had that happen to 106 of them.
+Home ID, the list of devices, the routes between them. A stick can lose that list. When it
+does, every device is still on the network and still bound to the same Home ID, but the stick
+no longer knows any of them, and Indigo's only documented remedy is to exclude and include
+every device again. mat on the Indigo forum had that happen to 106 of them.
 
 With a copy of the stick's memory on disk the remedy is a two-minute restore. This plugin
 makes that copy from inside Indigo, needing nothing but the stick you already have.
@@ -51,22 +51,35 @@ is when the stick's contents change. The plugin reminds you.
 
 ## Which controllers
 
-Any 500-series Z-Wave stick plugged into the Indigo Mac: the Aeotec Z-Stick Gen5 and Gen5+,
-the Z-Wave.me UZB, the HomeSeer SmartStick+, the Zooz ZST10 500 and similar. The plugin finds
-the port from Indigo's own Z-Wave settings, so there is nothing to configure.
+Any 500, 700 or 800 series Z-Wave stick plugged into the Indigo Mac. 500 series: the Aeotec
+Z-Stick Gen5 and Gen5+, the Z-Wave.me UZB, the HomeSeer SmartStick+, the Zooz ZST10 500 and
+similar. 700 and 800 series: the Zooz ZST10 700 and ZST39, the Aeotec Z-Stick 7 and Z-Stick
+10 Pro, the Silicon Labs UZB-7 and similar. The plugin finds the port from Indigo's own Z-Wave
+settings, so there is nothing to configure, and works out which generation it is talking to.
 
-Not yet: 700 and 800 series sticks (Z-Stick 7, Z-Stick 10 Pro, ZST39, ZWA-2). Their memory is
-read a different way and the author has none to test against. The plugin recognises one and
-says so rather than guessing. Sticks connected over the network rather than USB are also out.
+The 700 and 800 series keep their memory as a small filesystem rather than a flat block, and
+are read and written through a different Serial API command. Two things follow, both explained
+in the Event Log when they happen: the stick is reset at the end of every visit (that is the
+documented way to leave its memory tidy, and Indigo reconnects to it as normal), and a restore
+does not need the unplug-and-replug a 500-series stick needs. A backup takes about twenty
+seconds.
+
+Sticks connected over the network rather than USB are out.
 
 ## The one rule about restoring
 
 An image only goes back onto the same stick, or another stick of the same model running the
 same software version. It is a raw copy, and the layout of the memory changed between
 Aeotec's software versions (an original Gen5 on 1.01 and a Gen5+ on 1.02 are not
-interchangeable). The plugin checks this and refuses otherwise. Converting an image for a
-different generation of stick is a job for zwave-js, and needs the newer Gen5 software
-first; mat's forum write-up (topic 29135) covers that route.
+interchangeable), and between the Silicon Labs SDK versions a 700 or 800 series stick runs.
+The plugin checks this and refuses otherwise.
+
+Moving a network onto a different generation of stick (500 to 700, 700 to 800) is a
+conversion, not a raw restore, and is a job for zwave-js: its `nvmedit convert` tool, or the
+non-raw Restore NVM in Z-Wave JS UI, takes exactly the `.bin` this plugin writes. On a 500
+series stick that route needs the newer Gen5 software first; mat's forum write-up (topic
+29135) covers it. Two sticks holding the same Home ID must never be plugged in at the same
+time, with or without software driving them.
 
 ## Tested
 
@@ -81,6 +94,24 @@ accept a write to the last 16 bytes of its memory. Those bytes are blank in ever
 so the plugin reads them back instead of forcing the write, confirms they already match, and
 carries on. It is expected, not a fault.
 
+700 and 800 series, live on 14 September 2026 on a second system: a Zooz ZST39 LR (800 series,
+Z-Wave 7.24, ten nodes), an Aeotec Z-Stick 10 Pro (800 series, Z-Wave 7.23, its Z-Wave side;
+the Zigbee side is a separate port the plugin ignores) and a Silicon Labs 700 series stick
+(Z-Wave 7.17, 108 node ids) running Indigo 2025.2's network. Backups matched a Z-Wave JS UI
+backup of the same stick byte for byte, on both of the Serial API commands the plugin uses. A
+restore of an older image onto the ZST39 brought back its older node table, and a restore of
+the current image put it back; the Z-Stick 10 Pro went through backup, verify, restore and
+verify the same way; each restore verified by read-back.
+
+Two things learnt there, and now built in: a 700/800 stick answers the very last write of a
+restore with "end of file" and does not perform it (zwave-js sees the same; those bytes hold
+nothing any of its files refer to), and it must not be asked to write those bytes in smaller
+pieces, because a one-byte write there hung the ZST39 outright until it was replugged. The
+plugin leaves that tail alone and says so. And after any reset the stick may append a few
+bytes of its own housekeeping into free space, so a 700/800 read-back is compared everywhere
+the image holds data rather than byte for byte, and the node table and Home ID are checked
+too.
+
 ## Installation
 
 1. Download the plugin:
@@ -91,8 +122,9 @@ carries on. It is expected, not a fault.
    Backup). It needs no settings.
 
 Images go to `Z-Wave Controller Backups` next to the Indigo folder unless you choose another
-folder in the plugin's Configure dialog. They are about 256 KB each, so keep them all, and
-let your normal backup carry the folder off the Mac.
+folder in the plugin's Configure dialog. They are 256 KB each for a 500 series stick and about
+40 to 48 KB for a 700 or 800 series one, so keep them all, and let your normal backup carry the
+folder off the Mac.
 
 ## If something goes wrong
 
@@ -105,12 +137,24 @@ the thread is the one place to look.
 
 ## Credits
 
+The 700 and 800 series support was contributed by **Autolog**, tested on a ZST39, a Z-Stick 10 Pro
+and the 700 series stick running a second Indigo system, with Claude Opus 5 at the keyboard.
+
 mat's forum write-up of recovering a Gen5 that had lost its node table is what started this,
 and his zwave-js scripts remain the fallback route for anyone without the plugin. The Serial
 API details were checked against the zwave-js project's source (MIT). Nothing from either is
 bundled here; the plugin is plain Python with no dependencies.
 
 ## What's new
+
+**1.1.0** (14-Sep-2026) — 700 and 800 series sticks (Zooz ZST10 700 and ZST39, Aeotec Z-Stick 7
+and Z-Stick 10 Pro, UZB-7 and similar): backup, restore and verify through the NVM3 commands
+those sticks use, tested live on a ZST39 LR and a 700 series stick against Z-Wave JS UI. No
+unplug needed on this generation; the closing reset does the job. Node ids are read correctly
+from a stick that zwave-js has left in 16-bit mode. Show Plugin Info and the device report the
+full SDK version. Two small fixes found on the way: a backup folder pasted with quotes around it
+is cleaned up rather than landing the images inside the plugin bundle, and the Home ID check
+looks at every network Indigo's settings remember instead of the first one it finds.
 
 **1.0.2** (13-Sep-2026) — Show Plugin Info now reports the controller itself: model, Home ID,
 software version, how many nodes the last image holds, which file it is, and whether the network
@@ -125,6 +169,6 @@ with read-back verification, verify, one controller device, and the stale-backup
 
 ## Authors & licence
 
-Vibed into existence by **CliveS**, who knew what he wanted, argued until he got it, and tested it on a real house. Typed at inhuman speed by **Claude** (Anthropic), who mostly did as it was told.
+Vibed into existence by **CliveS**, who knew what he wanted, argued until he got it, and tested it on a real house. Typed at inhuman speed by **Claude** (Anthropic), who mostly did as it was told. 700 and 800 series by **Autolog** and Claude, on a second real house.
 
 © 2026 CliveS · [MIT licence](LICENSE) — copy it, fork it, bend it, break it, fix it, ship it. If it breaks, you get to keep both pieces.
