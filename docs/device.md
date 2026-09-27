@@ -15,8 +15,8 @@ The device list shows **Backup status**. The rest are there for triggers, contro
 
 | Shown as | What it means |
 |---|---|
-| **Backup status** | A short summary, such as **Never backed up**, **Backed up 13 Sep 12:07, current**, **Backed up 13 Sep 12:07, verified**, **Restored 13 Sep 12:07, verified**, **Network changed since backup**, or what the plugin is waiting for — **Waiting: switch Z-Wave off**, **Action required: switch Z-Wave back on** or **Action required: unplug and replug the stick**. |
-| **Action required** | True while the plugin is waiting for you to switch Z-Wave off or on, or to unplug and replug the stick. |
+| **Backup status** | A short summary, such as **Never backed up**, **Backed up 13 Sep 12:07, current**, **Backed up 13 Sep 12:07, verified**, **Restored 13 Sep 12:07, verified**, **Network changed since backup**, or what the plugin is waiting for — **Waiting: switch Z-Wave off**, **Action required: switch Z-Wave back on**, **Action required: unplug and replug the stick** or, after a restore that did not hold, **Action required: run Restore again**. |
+| **Action required** | True while the plugin is waiting for you to switch Z-Wave off or on, or to unplug and replug the stick, and after a restore that did not hold, until you run one that does. |
 | **Network changed since backup** | True when a Z-Wave device has been added or removed in Indigo since the last backup, when Indigo has a Z-Wave device the backup does not hold, or when a verify found the stick had changed. It goes back to false when you take a new backup. |
 | **Last backup OK** | True when the newest backup is good. False when there is none yet, or the last backup failed its checks. |
 | **Last backup at** | The date and time of the newest backup, such as `2026-09-13 12:07`. |

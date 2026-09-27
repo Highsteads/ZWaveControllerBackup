@@ -15,6 +15,6 @@
     <Field id="sep1" type="separator"/>
     <Field id="debugLogging" type="checkbox" defaultValue="false">
         <Label>Debug logging</Label>
-        <Description>Show every read and write chunk in the Event Log.</Description>
+        <Description>Show read and write progress every 10% in the Event Log.</Description>
     </Field>
 </PluginConfig>

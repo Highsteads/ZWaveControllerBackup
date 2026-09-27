@@ -27,7 +27,7 @@
         <ButtonTitle>Restore</ButtonTitle>
         <ConfigUI>
             <Field id="lbl_warn" type="label">
-                <Label>This writes an image back into the controller's memory. It only goes onto the same model running the same software version as the stick the image came from; the plugin refuses anything else. Afterwards the plugin resets the stick (a 500-series stick also needs an unplug and replug, which the Event Log asks for), reads it back to check the image took, and tells you to switch Z-Wave back on.</Label>
+                <Label>This writes an image back into the controller's memory. It only goes onto the same model running the same software version as the stick the image came from; the plugin refuses anything else. Afterwards the plugin resets the stick (a 500-series stick also needs an unplug and replug, which the Event Log asks for), reads it back to check the image took, and once it has, tells you to switch Z-Wave back on. If it did not take, Z-Wave stays off and you run Restore again.</Label>
             </Field>
             <Field id="imageFile" type="menu">
                 <Label>Image:</Label>

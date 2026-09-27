@@ -6,9 +6,12 @@
 #              node table, routes) and can write it back. Indigo has to let go of
 #              the stick while that happens, so the plugin waits for the user to
 #              switch Z-Wave off, does the job, and says when to switch it back on.
-# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
-# Date:        14-09-2026 16:30
-# Version:     1.1.0
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5;
+#              1.2.0 Claude Opus 5.5
+# Date:        27-09-2026 10:30
+# Version:     1.2.0
+#              1.2.0 a restore that did not hold keeps Z-Wave off: no switch-on prompt,
+#              device shows "run Restore again", and the re-run is accepted at once
 
 try:
     import indigo
@@ -41,7 +44,7 @@ import controller_image as ci
 # ============================================================
 
 PLUGIN_ID = "com.clives.indigoplugin.zwave-controller-backup"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.2.0"
 DEVICE_TYPE = "zwaveController"
 DEFAULT_FOLDER_NAME = "Z-Wave Controller Backups"
 POLL_SECONDS = 2
@@ -50,6 +53,8 @@ REPLUG_WAIT_SECONDS = 5 * 60
 PORT_FREE_WAIT_SECONDS = 30
 SETTLE_SECONDS = 2
 REMINDER_SECONDS = (180, 360)
+RESTORE_AGAIN_STATUS = "Action required: run Restore again"
+HOLD_OFF_ADVICE = "Do not switch Z-Wave back on yet. Run Restore again, or restore your previous image."
 
 FOLDER_README = """# Z-Wave Controller Backups
 
@@ -93,6 +98,7 @@ class Plugin(indigo.PluginBase):
         self._final_status = None
         self._shadow = {}            # last states written, for when no device exists yet
         self._session_open = False   # a 700/800 stick has its radio off and needs the closing reset
+        self._memory_unproven = False  # a restore has written to the stick and not yet proved the image took
         self._read_prefs(pluginPrefs)
 
     # --------------------------------------------------------
@@ -443,6 +449,7 @@ class Plugin(indigo.PluginBase):
             if self._busy:
                 return f"A {self._busy} is already running. Wait for the Event Log to say it has finished."
             self._busy = name
+            self._memory_unproven = False
             self._stop.clear()
             self._worker = threading.Thread(target=self._guarded, args=(name, fn, args), name=f"zwcb-{name}", daemon=True)
             self._worker.start()
@@ -456,9 +463,14 @@ class Plugin(indigo.PluginBase):
             self.logger.debug("traceback", exc_info=True)
             self._final_status = f"{name.capitalize()} failed"
             self._set(lastResult=f"{name} failed: {e}")
+            if self._memory_unproven:
+                self.logger.warning(f"The controller's memory had been written when this happened, so it may not hold the image. {HOLD_OFF_ADVICE}")
         finally:
             try:
-                self._cue_reenable()
+                if self._memory_unproven:
+                    self._hold_zwave_off()
+                else:
+                    self._cue_reenable()
             finally:
                 with self._lock:
                     self._busy = None
@@ -595,6 +607,13 @@ class Plugin(indigo.PluginBase):
         def cb(done, total):
             self.logger.debug(f"{label}: {done * 100 // total}% ({done}/{total} bytes)")
         return cb
+
+    def _hold_zwave_off(self):
+        """After a restore that wrote to the stick and did not prove the image took. The stick's
+        memory is not known to match the image, so there is no switch-on prompt and no wait for
+        Z-Wave to come back: the job ends here, and Run Restore again is accepted straight away."""
+        self._final_status = None
+        self._set(actionRequired=True, backupStatus=RESTORE_AGAIN_STATUS)
 
     def _cue_reenable(self):
         """After any operation: if Z-Wave is still off, say so, and clear the flag once it is on."""
@@ -745,6 +764,7 @@ class Plugin(indigo.PluginBase):
             f"Writing {_os.path.basename(path)} ({len(image)} bytes) into {identity['modelName']}, Home ID {identity['homeId']}. "
             f"Do not unplug anything yet.")
         chunk = ci.initial_chunk_for(identity)
+        self._memory_unproven = True
         written, skipped = ci.write_nvm(api, image, chunk, progress=self._progress("write"), should_stop=self._stop.is_set)
         for off, n in skipped:
             at_end = off + n == len(image)
@@ -778,12 +798,13 @@ class Plugin(indigo.PluginBase):
             self.logger.info(
                 f"Restore verified: the controller's memory matches the image byte for byte, Home ID {ident2['homeId']}, "
                 f"{len([n for n in ident2['nodeIds'] if n != ident2['ownNodeId']])} nodes.")
+            self._memory_unproven = False
             self._final_status = f"Restored {self._pretty(side.get('takenAt', ''))}, verified"
             self._set(lastResult="restore ok: read-back matches the image", **self._identity_states(ident2))
             return True
         self.logger.error(
             f"Restore did NOT hold: the read-back differs from the image in {diff['differingBytes']} bytes "
-            f"(Home ID now {ident2.get('homeId')}). Do not switch Z-Wave back on yet. Run Restore again, or restore your previous image.")
+            f"(Home ID now {ident2.get('homeId')}). {HOLD_OFF_ADVICE}")
         self._final_status = "Restore failed"
         self._set(lastResult=f"restore failed: read-back differs in {diff['differingBytes']} bytes")
         return False
@@ -795,6 +816,7 @@ class Plugin(indigo.PluginBase):
         self.logger.info(
             f"Writing {_os.path.basename(path)} ({len(image)} bytes) into {identity['modelName']}, Home ID {identity['homeId']}. "
             f"Do not unplug anything.")
+        self._memory_unproven = True
         written, declined = ci.write_nvm_700(api, func, image, progress=self._progress("write"), should_stop=self._stop.is_set)
         if declined:
             self.logger.info(
@@ -819,6 +841,7 @@ class Plugin(indigo.PluginBase):
             self.logger.info(
                 f"Restore verified: everything the image holds is in the controller{note}, Home ID {ident2['homeId']}, "
                 f"{len([n for n in got_nodes if n != ident2['ownNodeId']])} nodes as in the image.")
+            self._memory_unproven = False
             self._final_status = f"Restored {self._pretty(side.get('takenAt', ''))}, verified"
             self._set(lastResult="restore ok: read-back matches the image", **self._identity_states(ident2))
             return True
@@ -830,7 +853,7 @@ class Plugin(indigo.PluginBase):
         if got_nodes != want_nodes:
             why.append(f"the controller lists {len(got_nodes)} nodes where the image has {len(want_nodes)}")
         self.logger.error(
-            f"Restore did NOT hold: {'; '.join(why)}. Do not switch Z-Wave back on yet. Run Restore again, or restore your previous image.")
+            f"Restore did NOT hold: {'; '.join(why)}. {HOLD_OFF_ADVICE}")
         self._final_status = "Restore failed"
         self._set(lastResult="restore failed: " + "; ".join(why))
         return False

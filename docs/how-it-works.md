@@ -17,7 +17,7 @@ A 500 series stick holds its memory as one plain block, which the plugin reads f
 
 Only one program can talk to the stick at a time, and while Z-Wave is running that program is Indigo. There is no command a plugin can use to make Indigo let go, so you do it by hand with **Interfaces → Z-Wave → Disable**.
 
-The plugin checks every two seconds whether Z-Wave has been switched off. Once it has, the plugin waits until nothing else has the stick open, pauses two seconds so the stick can finish anything it was still saying to Indigo, and then opens it for itself alone. When the job is finished it closes the stick, asks you to switch Z-Wave back on, and checks every two seconds until you have.
+The plugin checks every two seconds whether Z-Wave has been switched off. Once it has, the plugin waits until nothing else has the stick open, pauses two seconds so the stick can finish anything it was still saying to Indigo, and then opens it for itself alone. When the job is finished it closes the stick, asks you to switch Z-Wave back on, and checks every two seconds until you have. The one exception is a restore that wrote to the stick and did not hold: then the plugin says to leave Z-Wave off and run the restore again, and does not wait.
 
 ## Finding the stick
 
@@ -41,7 +41,7 @@ The plugin watches Indigo's device list. When a Z-Wave device is added or remove
 
 ## One job at a time
 
-The plugin runs one backup, verify or restore at a time. A job counts as finished once Z-Wave is back on, so if you try to start another before then, the plugin says one is already running. If Z-Wave stays off for half an hour after a job, the plugin gives a warning that nothing is controlling your devices, and stops waiting.
+The plugin runs one backup, verify or restore at a time. A job counts as finished once Z-Wave is back on, or at once after a restore that did not hold, so if you try to start another before then, the plugin says one is already running. If Z-Wave stays off for half an hour after a job, the plugin gives a warning that nothing is controlling your devices, and stops waiting.
 
 ## What goes in the log
 

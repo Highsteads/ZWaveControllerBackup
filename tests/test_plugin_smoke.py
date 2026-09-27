@@ -7,10 +7,12 @@
 #              image and writes a right one, verify compares, the stale nudge
 #              fires once, menus refuse when busy, and the plugin never touches
 #              a port while Z-Wave is on, and Show Plugin Info describes the
-#              controller from the newest image.
-# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
-# Date:        14-09-2026 16:30
-# Version:     1.2.0
+#              controller from the newest image. A restore that did not hold
+#              keeps Z-Wave off and accepts the re-run at once.
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5;
+#              1.3.0 Claude Opus 5.5
+# Date:        27-09-2026 10:30
+# Version:     1.3.0
 
 import importlib.util
 import json
@@ -319,6 +321,108 @@ def test_restore_reports_a_read_back_that_differs(tmp_path):
     assert any("did NOT hold" in m for m in spy.messages(logging.ERROR))
 
 
+def _real_pauses(plugin):
+    """A real pause in the plugin's waits, so a wait for Z-Wave that should not happen shows up as
+    a worker that is still alive rather than a busy spin; the test sets _stop to end any such wait."""
+    import time as _t
+    plugin._sleep = lambda s: _t.sleep(0.01)
+
+
+def test_a_restore_that_did_not_hold_keeps_zwave_off_and_accepts_a_rerun(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    dev = FakeDevice(101, "Z-Wave Controller")
+    ind.devices.add(dev)
+    plugin.deviceStartComm(dev)
+    stick = FakeStick()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+
+    class Forgetful(FakeStick):
+        def _respond(self, func, payload):
+            if func == mod.ci.F_EXT_NVM_WRITE:
+                return bytes([1])
+            return super()._respond(func, payload)
+    forget = Forgetful()
+    forget.nvm[100:200] = b"\x00" * 100
+    wire_stick(mod, plugin, forget)
+    mod.REENABLE_WAIT_SECONDS = 30 * 60              # the real half hour: the job must not sit in it
+    _real_pauses(plugin)
+    spy.records.clear()
+    try:
+        assert plugin.menuRestore({"imageFile": path, "confirmOverwrite": "true"})[0] is True
+        plugin._worker.join(5)
+        assert not plugin._worker.is_alive(), "the failed restore is still waiting for Z-Wave to come back on"
+    finally:
+        plugin._stop.set()
+    assert any("did NOT hold" in m and "Do not switch Z-Wave back on yet" in m for m in spy.messages(logging.ERROR))
+    assert not any("Switch Z-Wave back on now" in m for m in spy.messages())
+    assert dev.states["actionRequired"] is True
+    assert dev.states["backupStatus"] == "Action required: run Restore again"
+    assert plugin._busy is None
+    # the re-run the log advises is accepted straight away, and a good stick verifies
+    plugin._stop.clear()
+    mod.REENABLE_WAIT_SECONDS = 0
+    good = FakeStick()
+    good.nvm[100:200] = b"\x00" * 100
+    wire_stick(mod, plugin, good)
+    spy.records.clear()
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert any("Restore verified" in m for m in spy.messages(logging.INFO))
+    assert any("Switch Z-Wave back on now" in m for m in spy.messages(logging.INFO))
+    assert dev.states["backupStatus"] == "Action required: switch Z-Wave back on"
+
+
+def test_a_restore_that_fails_after_writing_keeps_zwave_off(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    dev = FakeDevice(101, "Z-Wave Controller")
+    ind.devices.add(dev)
+    plugin.deviceStartComm(dev)
+    stick = FakeStick()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+
+    def never_back(port_path):
+        raise RuntimeError("the stick did not come back within five minutes of being unplugged")
+    plugin._wait_for_replug = never_back
+    spy.records.clear()
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert any("Restore failed" in m for m in spy.messages(logging.ERROR))
+    assert any("may not hold the image" in m and "Do not switch Z-Wave back on yet" in m for m in spy.messages(logging.WARNING))
+    assert not any("Switch Z-Wave back on now" in m for m in spy.messages())
+    assert dev.states["backupStatus"] == "Action required: run Restore again"
+
+
+def test_a_refused_restore_still_asks_for_zwave_back_on(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    wrong = os.path.join(plugin.backup_folder, "wrong.bin")
+    open(wrong, "wb").write(open(path, "rb").read())
+    bad = json.loads(open(mod.ci.sidecar_path_for(path)).read())
+    bad["identity"]["libraryVersionString"] = "Z-Wave 6.07"
+    json.dump(bad, open(mod.ci.sidecar_path_for(wrong), "w"))
+    spy.records.clear()
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": wrong, "confirmOverwrite": "true"})
+    assert any("Restore refused" in m for m in spy.messages(logging.ERROR))
+    assert any("Switch Z-Wave back on now" in m for m in spy.messages(logging.INFO))   # nothing was written
+
+
 def test_verify_matches_then_notices_a_change(tmp_path):
     zw = {"on": False}
     mod, plugin, ind = load_plugin(tmp_path, zw)
@@ -507,9 +611,13 @@ def test_700_series_restore_notices_a_write_that_did_not_take(tmp_path):
     forget = Forgetful()
     forget.nvm[100:2000] = b"\x00" * 1900
     wire_stick(mod, plugin, forget)
+    spy.records.clear()
     run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
     assert any("did NOT hold" in m and "not housekeeping" in m for m in spy.messages(logging.ERROR))
     assert plugin._shadow["lastResult"].startswith("restore failed")
+    assert not any("Switch Z-Wave back on now" in m for m in spy.messages())
+    assert plugin._shadow["backupStatus"] == "Action required: run Restore again"
+    assert plugin._shadow["actionRequired"] is True
 
 
 def test_700_series_restore_notices_a_node_table_that_differs(tmp_path):

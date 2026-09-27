@@ -7,6 +7,13 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.2.0 — 27 September 2026
+
+- When a restore does not hold, the Event Log tells you to leave Z-Wave off, and that is now the last word. Before, the very next line asked you to switch Z-Wave back on, which was the wrong advice.
+- The device shows **Action required: run Restore again** in that case, rather than asking for Z-Wave back on.
+- You can run the restore again straight away. Before, the plugin sat waiting for Z-Wave for up to half an hour and turned the second try away, so the only way round it was to reload the plugin.
+- The **Debug logging** setting now says what it really shows, which is how far each read and write has got, every tenth of the way. It used to promise every single piece.
+
 ## 1.1.0 — 14 September 2026
 
 - **700 and 800 series sticks** can be backed up, restored and verified, including the Zooz ZST10 700 and ZST39, the Aeotec Z-Stick 7 and Z-Stick 10 Pro, the Silicon Labs UZB-7 and similar. Autolog wrote this and tested it on a Zooz ZST39 LR, an Aeotec Z-Stick 10 Pro and a Silicon Labs 700 series stick, with the backups matching those made by Z-Wave JS UI byte for byte.

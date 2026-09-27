@@ -11,7 +11,7 @@ A restore writes a backup back into the stick, over whatever the stick holds now
 
 - **Only restore when you need to** — the stick has lost its network, or you are moving the network onto a replacement stick of the same model.
 - **A backup only goes back onto the same model running the same software version** as the stick it came from. The layout of the memory changes between software versions, so a copy taken under one version does not fit another. The plugin checks this and refuses otherwise.
-- **Switch Z-Wave back on only when the Event Log says Restore verified**, or when it says **Restore refused**, which means nothing was written. After any other ending, leave Z-Wave off and follow [If the restore does not hold](#if-the-restore-does-not-hold) below.
+- **Switch Z-Wave back on only when the Event Log asks you to.** Once the plugin has written to the stick, it asks only after the restore is verified. If the restore does not hold, it says **Do not switch Z-Wave back on yet** and does not ask. Follow [If the restore does not hold](#if-the-restore-does-not-hold) below.
 - **Never plug in two sticks holding the same Home ID at the same time**, with or without Indigo running. After you restore onto a replacement stick, the old stick and the new one hold the same network.
 - **A 500 series stick needs unplugging and plugging back in** partway through, when the Event Log asks. Stay near the Mac.
 
@@ -56,15 +56,14 @@ If you restored onto a replacement stick, put the old one away and keep it unplu
 
 ## If the restore does not hold
 
-If the Event Log says **Restore did NOT hold** or **Restore failed**, the stick's memory may be partly written. **Leave Z-Wave off.**
+If the Event Log says **Restore did NOT hold**, or the restore failed after the plugin had started writing, the stick's memory may be partly written. The log then says **Do not switch Z-Wave back on yet**, and the device shows **Action required: run Restore again**. **Leave Z-Wave off.** The plugin does not ask you to switch it back on, and it is ready for the next restore straight away.
 
-The plugin's next line still asks you to switch Z-Wave back on, as it does at the end of every job. **Ignore it after a failed restore.** The plugin stays busy waiting for Z-Wave to come back on, for up to half an hour, and will not start another restore until then.
-
-To try again straight away:
+To try again:
 
 1. Check the stick is plugged in.
-2. Choose **Plugins → Z-Wave Controller Backup → Reload**, which ends the wait.
-3. Run **Restore Controller...** again with the same backup, or choose your previous backup. Z-Wave is already off, so the plugin starts as soon as you click Restore.
+2. Run **Restore Controller...** again with the same backup, or choose your previous backup. Z-Wave is already off, so the plugin starts as soon as you click Restore.
+
+If a restore failed before the plugin wrote anything, for example because it could not open the stick, the stick is as it was. The Event Log then asks you to switch Z-Wave back on as usual, and it is safe to do so.
 
 Only switch Z-Wave back on once the Event Log says **Restore verified**. If a restore will not hold after a second try, post the Event Log lines in the [forum thread](https://forums.indigodomo.com/viewtopic.php?t=29135) before you do anything else.
 

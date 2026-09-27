@@ -9,7 +9,7 @@ Each section starts with what you see, then what it means and what to do.
 
 ## The Event Log says "Restore did NOT hold" or "Restore failed"
 
-The stick's memory may be partly written. **Leave Z-Wave off**, even though the next line in the log asks you to switch it back on. The [Restoring a backup](restoring.md#if-the-restore-does-not-hold) page says exactly what to do next.
+If the log goes on to say **Do not switch Z-Wave back on yet**, the stick's memory may be partly written. **Leave Z-Wave off** and run the restore again. The [Restoring a backup](restoring.md#if-the-restore-does-not-hold) page says exactly what to do. If the log asks you to switch Z-Wave back on instead, nothing was written, and it is safe to do so.
 
 ## The Event Log says "Restore refused"
 
@@ -21,7 +21,7 @@ The plugin waited the number of minutes set in its [Settings](settings.md), 10 t
 
 ## The plugin says a backup, verify or restore "is already running"
 
-A job counts as finished once Z-Wave is back on. Choose **Interfaces → Z-Wave → Enable**, wait for the log to say **Z-Wave is back on**, and try again. If you are in the middle of a failed restore, do not switch Z-Wave on — use **Reload** as the [Restoring a backup](restoring.md#if-the-restore-does-not-hold) page describes.
+A job counts as finished once Z-Wave is back on. Choose **Interfaces → Z-Wave → Enable**, wait for the log to say **Z-Wave is back on**, and try again. A restore that did not hold finishes straight away without asking for Z-Wave, so you can run it again at once.
 
 ## The Event Log says "Could not find the Z-Wave serial port in Indigo's settings"
 
@@ -61,7 +61,7 @@ The stick has changed since the last backup. Routes between devices change on th
 
 ## The Event Log says Z-Wave has been off for half an hour
 
-Nothing is controlling your Z-Wave devices. Choose **Interfaces → Z-Wave → Enable**, unless a restore has just failed, in which case follow the [Restoring a backup](restoring.md#if-the-restore-does-not-hold) page.
+Nothing is controlling your Z-Wave devices. Choose **Interfaces → Z-Wave → Enable**.
 
 ## The Event Log says the plugin does not recognise the controller
 

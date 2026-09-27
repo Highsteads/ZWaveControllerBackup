@@ -2,7 +2,7 @@
 
 **Back up the memory of your Z-Wave USB stick from inside Indigo, and put it back if the stick ever loses your network.**
 
-**Version:** 1.1.0 | **Author:** CliveS, Autolog & Claude | **Needs:** Indigo 2025.2 or later, and a Z-Wave USB stick plugged into the Indigo Mac
+**Version:** 1.2.0 | **Author:** CliveS, Autolog & Claude | **Needs:** Indigo 2025.2 or later, and a Z-Wave USB stick plugged into the Indigo Mac
 
 **[Read the full guide](https://highsteads.github.io/ZWaveControllerBackup/)** — setting up, backing up, restoring, what everything means, and what to do when something goes wrong.
 
@@ -42,9 +42,9 @@ Take a fresh backup whenever you add or remove a device. Before you ever restore
 
 ## What's new
 
-**v1.1.0** — 700 and 800 series sticks, written by **Autolog**: backup, restore and verify, tested on a Zooz ZST39 LR, an Aeotec Z-Stick 10 Pro and a Silicon Labs 700 series stick. These sticks need no unplugging during a restore. Show Plugin Info and the device show the stick's full software version, and a backup folder pasted with quotes around it is cleaned up.
+**v1.2.0** — When a restore does not hold, the plugin now tells you to leave Z-Wave off and stops there, instead of also asking you to switch it back on. The device shows **Action required: run Restore again**, and you can run the restore again straight away.
 
-**v1.0.2** — Show Plugin Info describes the stick itself: its model, Home ID, software version, how many devices the last backup holds, and whether the network has changed since.
+**v1.1.0** — 700 and 800 series sticks, written by **Autolog**: backup, restore and verify, tested on a Zooz ZST39 LR, an Aeotec Z-Stick 10 Pro and a Silicon Labs 700 series stick. These sticks need no unplugging during a restore. Show Plugin Info and the device show the stick's full software version, and a backup folder pasted with quotes around it is cleaned up.
 
 Every version is listed in the [version history](https://highsteads.github.io/ZWaveControllerBackup/changelog.html).
 
