@@ -5,11 +5,13 @@
 #              framing vectors, the parser under unsolicited / corrupt / CAN
 #              traffic, identity from Gen5-shaped payloads, adaptive reads, the
 #              write path, image checks, sidecars and every restore guard.
-# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
-# Date:        14-09-2026 16:30
-# Version:     1.1.0
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5;
+#              1.2.0 Claude Opus 5.5 (checksum and sanity guards on restore)
+# Date:        05-10-2026 22:50
+# Version:     1.2.0
 
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -231,7 +233,8 @@ def _sidecar(tmp_path, ident=None, size=262144):
     image = os.path.join(tmp_path, "img.bin")
     with open(image, "wb") as fh:
         fh.write(bytes(FakeStick.default_nvm(size)))
-    side = ci.sidecar_for(ident, nvm, {"sha256": "x"}, image, "/dev/cu.usbmodem101",
+    checks, _problems = ci.image_checks(open(image, "rb").read(), size, ident["homeId"])
+    side = ci.sidecar_for(ident, nvm, checks, image, "/dev/cu.usbmodem101",
                           datetime.datetime(2026, 9, 13, 12, 0), "1.0.0", "2025.2.0", True)
     with open(ci.sidecar_path_for(image), "w") as fh:
         json.dump(side, fh)
@@ -591,8 +594,8 @@ def test_compare_700_explains_housekeeping_and_tail_but_not_real_differences():
 def test_restore_guard_refuses_a_different_full_sdk_on_the_same_library_string(tmp_path):
     ident = ci.read_identity(api_for(FakeStick700()))
     nvm = {"sizeBytes": 40960}
-    image = b"\xff" * 40960
-    side = {"identity": dict(ident)}
+    image = bytes(FakeStick700().nvm)             # NVM3-shaped, so the image sanity checks pass
+    side = {"identity": dict(ident), "checks": {"sha256": hashlib.sha256(image).hexdigest()}}
     assert ci.restore_refusals(image, side, ident, nvm) == []
     side["identity"]["protocolVersionFull"] = "7.19.0"
     reasons = ci.restore_refusals(image, side, ident, nvm)
@@ -603,3 +606,45 @@ def test_image_checks_pass_on_an_nvm3_shaped_image():
     stick = FakeStick700()
     checks, problems = ci.image_checks(bytes(stick.nvm), 40960, "E2DAD17B")
     assert problems == [] and checks["homeIdOccurrences"] >= 1
+
+
+# ---------------------------------------------------------------- checksum guard (1.2.1)
+
+def test_restore_guard_refuses_an_image_that_no_longer_matches_its_checksum(tmp_path):
+    image, side, ident, nvm = _sidecar(tmp_path)
+    data = bytearray(open(image, "rb").read())
+    data[5000] ^= 0x01                              # same length, one bit wrong
+    reasons = ci.restore_refusals(bytes(data), side, ident, nvm)
+    assert any("checksum" in r and "changed or been damaged" in r for r in reasons), reasons
+
+
+def test_restore_guard_refuses_a_sidecar_with_no_or_a_malformed_checksum(tmp_path):
+    image, side, ident, nvm = _sidecar(tmp_path)
+    data = open(image, "rb").read()
+    for bad in (None, "", "x", "zz" * 32, side["checks"]["sha256"][:63], 12345):
+        broken = json.loads(json.dumps(side))
+        if bad is None:
+            del broken["checks"]["sha256"]
+        else:
+            broken["checks"]["sha256"] = bad
+        reasons = ci.restore_refusals(data, broken, ident, nvm)
+        assert any("no usable checksum" in r for r in reasons), (bad, reasons)
+    broken = json.loads(json.dumps(side))
+    del broken["checks"]
+    assert any("no usable checksum" in r for r in ci.restore_refusals(data, broken, ident, nvm))
+
+
+def test_restore_guard_accepts_an_upper_case_checksum(tmp_path):
+    image, side, ident, nvm = _sidecar(tmp_path)
+    side["checks"]["sha256"] = side["checks"]["sha256"].upper()
+    assert ci.restore_refusals(open(image, "rb").read(), side, ident, nvm) == []
+
+
+def test_restore_guard_reruns_the_image_sanity_checks(tmp_path):
+    image, side, ident, nvm = _sidecar(tmp_path)
+    blank = b"\xff" * nvm["sizeBytes"]
+    side["checks"]["sha256"] = hashlib.sha256(blank).hexdigest()   # checksum honest, image useless
+    reasons = ci.restore_refusals(blank, side, ident, nvm)
+    assert any("blank" in r for r in reasons)
+    assert any("Home ID does not appear" in r for r in reasons)
+    assert not any("checksum" in r for r in reasons)

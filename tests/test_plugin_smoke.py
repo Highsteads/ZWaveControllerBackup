@@ -8,11 +8,12 @@
 #              fires once, menus refuse when busy, and the plugin never touches
 #              a port while Z-Wave is on, and Show Plugin Info describes the
 #              controller from the newest image. A restore that did not hold
-#              keeps Z-Wave off and accepts the re-run at once.
+#              keeps Z-Wave off and accepts the re-run at once. A damaged image is
+#              refused before any write, and a failed open lets go of the port.
 # Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5;
-#              1.3.0 Claude Opus 5.5
-# Date:        27-09-2026 10:30
-# Version:     1.3.0
+#              1.3.0, 1.4.0 Claude Opus 5.5
+# Date:        05-10-2026 22:50
+# Version:     1.4.0
 
 import importlib.util
 import json
@@ -781,3 +782,129 @@ def test_show_plugin_info_reports_a_network_that_has_moved_since_the_backup(tmp_
     assert dict(plugin._controller_extras())["Network changed:"].startswith("no,")
     plugin.deviceCreated(FakeDevice(7, "New sensor", device_type="sensor", plugin_id="", address="240"))
     assert dict(plugin._controller_extras())["Network changed:"].startswith("yes,")
+
+
+# ── 1.2.1: the image must match its own checksum before anything is written ──
+
+def _corrupt_one_byte(path, offset=5000):
+    data = bytearray(open(path, "rb").read())
+    data[offset] ^= 0x01                         # same length, so the size guard cannot see it
+    open(path, "wb").write(bytes(data))
+
+
+@pytest.mark.parametrize("stick_cls", [FakeStick, FakeStick700])
+def test_restore_refuses_a_damaged_image_before_writing_anything(tmp_path, stick_cls):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = stick_cls()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    _corrupt_one_byte(path)
+    stick.nvm[100:200] = b"\x00" * 100           # give a restore something it would have changed
+    writes_before = stick.write_count
+    spy.records.clear()
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert stick.write_count == writes_before, "a damaged image reached the stick"
+    assert any("Restore refused" in m and "checksum" in m for m in spy.messages(logging.ERROR))
+    assert not any("Restore verified" in m for m in spy.messages())
+    assert plugin._shadow["lastResult"].startswith("restore refused")
+
+
+@pytest.mark.parametrize("stick_cls", [FakeStick, FakeStick700])
+def test_restore_verified_says_the_backup_checksum_was_confirmed(tmp_path, stick_cls):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = stick_cls()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    stick.nvm[100:200] = b"\x00" * 100
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    verified = [m for m in spy.messages(logging.INFO) if "Restore verified" in m]
+    assert verified and "checksum was confirmed" in verified[0], verified
+
+
+class _CountingPort:
+    def __init__(self):
+        self.closed = 0
+
+    def close(self):
+        self.closed += 1
+
+
+def test_open_closes_the_port_when_the_parser_reset_fails(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    port = _CountingPort()
+    mod.ci.open_port = lambda path, tries=15, pause=1.5: port
+    mod.ci.port_holders = lambda p: []
+    plugin._sleep = lambda s: None
+
+    class Boom:
+        def __init__(self, port, sleep=None):
+            pass
+
+        def reset_parser(self):
+            raise OSError("the stick went away")
+    mod.ci.SerialApi = Boom
+    with pytest.raises(OSError):
+        plugin._open("/dev/cu.fake")
+    assert port.closed == 1, "the exclusive port was left open"
+
+
+def test_open_closes_the_port_when_building_the_api_fails(tmp_path):
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    port = _CountingPort()
+    mod.ci.open_port = lambda path, tries=15, pause=1.5: port
+    mod.ci.port_holders = lambda p: []
+    plugin._sleep = lambda s: None
+
+    def boom(port, sleep=None):
+        raise RuntimeError("no api")
+    mod.ci.SerialApi = boom
+    with pytest.raises(RuntimeError):
+        plugin._open("/dev/cu.fake")
+    assert port.closed == 1
+
+
+def test_a_failed_reopen_after_the_replug_leaves_no_port_open(tmp_path):
+    """The read-back _open after the unplug/replug goes through the same door: if the stick comes
+    back talking nonsense, the second port must be closed too, not left held by the plugin."""
+    zw = {"on": False}
+    mod, plugin, ind = load_plugin(tmp_path, zw)
+    spy = LogSpy()
+    plugin.logger.addHandler(spy)
+    plugin.startup()
+    stick = FakeStick()
+    wire_stick(mod, plugin, stick)
+    run_and_join(plugin, plugin.menuBackup, {})
+    path, side = mod.ci.list_images(plugin.backup_folder)[0]
+    stick.nvm[100:200] = b"\x00" * 100
+    second = _CountingPort()
+    real_api = mod.ci.SerialApi
+    opened = []
+
+    def open_port(p, tries=15, pause=1.5):
+        opened.append(p)
+        return stick if len(opened) == 1 else second
+    mod.ci.open_port = open_port
+
+    def api_for(port, sleep=None):
+        api = real_api(port, sleep=sleep)
+        if port is second:
+            def fail(*a, **k):
+                raise OSError("garbled after the replug")
+            api.reset_parser = fail
+        return api
+    mod.ci.SerialApi = api_for
+    run_and_join(plugin, plugin.menuRestore, {"imageFile": path, "confirmOverwrite": "true"})
+    assert len(opened) == 2 and second.closed == 1
+    assert plugin._shadow["backupStatus"] == "Action required: run Restore again"

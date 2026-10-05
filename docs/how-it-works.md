@@ -33,7 +33,7 @@ After writing a backup into the stick, the plugin reads the stick again and comp
 
 ## Why it is so strict about the model and software
 
-A backup is a raw copy of the memory, and the way that memory is laid out changed between software versions. An original Aeotec Gen5 and a Gen5+ run different versions and are not interchangeable, and 700 and 800 series sticks differ between releases of their Z-Wave software too. So before it writes anything, the plugin reads the stick and refuses unless the model and software version match the backup's, and the Home ID matches as well, unless you have said it is a replacement stick.
+A backup is a raw copy of the memory, and the way that memory is laid out changed between software versions. An original Aeotec Gen5 and a Gen5+ run different versions and are not interchangeable, and 700 and 800 series sticks differ between releases of their Z-Wave software too. So before it writes anything, the plugin reads the stick and refuses unless the model and software version match the backup's, and the Home ID matches as well, unless you have said it is a replacement stick. It also refuses a backup file that no longer matches the checksum recorded when it was taken, because the check after the restore compares the stick with that same file and could not see damage that was already in it.
 
 ## The reminder when the network changes
 

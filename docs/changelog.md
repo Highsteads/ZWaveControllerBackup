@@ -7,6 +7,13 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.2.1 — 5 October 2026
+
+- A restore now checks the backup file is exactly the one that was saved before it writes anything. Every backup records a checksum of its image in its `.json` file, and until now the restore never looked at it, so a file damaged on a disk but still the right size would have been written into the stick, and the check afterwards would have said it held, because it compared the stick with the same damaged file. Now a file that does not match is refused, and so is one whose `.json` file has no checksum at all.
+- A restore also runs the checks a fresh backup has to pass, and refuses an image that is almost blank or that does not hold its own Home ID.
+- **Restore verified** now says the backup's checksum was confirmed before anything was written, so it claims no more than the plugin has checked.
+- If something went wrong just as the plugin opened the stick, it could keep hold of the port, and Indigo could not get the stick back until the plugin was reloaded. It now lets go.
+
 ## 1.2.0 — 27 September 2026
 
 - When a restore does not hold, the Event Log tells you to leave Z-Wave off, and that is now the last word. Before, the very next line asked you to switch Z-Wave back on, which was the wrong advice.

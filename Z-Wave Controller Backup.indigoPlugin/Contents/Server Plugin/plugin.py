@@ -7,9 +7,12 @@
 #              the stick while that happens, so the plugin waits for the user to
 #              switch Z-Wave off, does the job, and says when to switch it back on.
 # Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5;
-#              1.2.0 Claude Opus 5.5
-# Date:        27-09-2026 10:30
-# Version:     1.2.0
+#              1.2.0, 1.2.1 Claude Opus 5.5
+# Date:        05-10-2026 22:50
+# Version:     1.2.1
+#              1.2.1 a restore is refused unless the image matches the checksum its sidecar
+#              recorded (and passes the backup checks again); "Restore verified" says so;
+#              _open closes the port if the parser reset fails
 #              1.2.0 a restore that did not hold keeps Z-Wave off: no switch-on prompt,
 #              device shows "run Restore again", and the re-run is accepted at once
 
@@ -44,7 +47,7 @@ import controller_image as ci
 # ============================================================
 
 PLUGIN_ID = "com.clives.indigoplugin.zwave-controller-backup"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.2.1"
 DEVICE_TYPE = "zwaveController"
 DEFAULT_FOLDER_NAME = "Z-Wave Controller Backups"
 POLL_SECONDS = 2
@@ -533,8 +536,17 @@ class Plugin(indigo.PluginBase):
             raise RuntimeError(f"the port is still held by process {', '.join(holders)} although Z-Wave reports off")
         self._sleep(SETTLE_SECONDS)          # let the stick finish whatever it was saying to Indigo
         port = ci.open_port(port_path)
-        api = ci.SerialApi(port, sleep=self._sleep_short)
-        api.reset_parser()
+        try:
+            api = ci.SerialApi(port, sleep=self._sleep_short)
+            api.reset_parser()
+        except BaseException:
+            # The port is opened exclusively: left open here, Indigo could not get the stick back
+            # until the plugin restarted. The caller never sees it, so close it before passing on.
+            try:
+                port.close()
+            except Exception:
+                pass
+            raise
         return port, api
 
     @staticmethod
@@ -758,6 +770,9 @@ class Plugin(indigo.PluginBase):
             self._final_status = "Restore refused"
             self._set(lastResult="restore refused: " + "; ".join(reasons))
             return False
+        self.logger.info(
+            f"{_os.path.basename(path)} matches the checksum recorded when it was saved "
+            f"(sha256 {side['checks']['sha256'].lower()[:12]}) and passes the same checks as a fresh backup.")
         if self._series(identity) >= 700:
             return self._restore_body_700(port_path, port, api, identity, nvm, path, image, side)
         self.logger.info(
@@ -796,7 +811,8 @@ class Plugin(indigo.PluginBase):
         diff = ci.compare_images(image, current)
         if diff["differingBytes"] == 0 and ident2.get("homeId") == side["identity"].get("homeId"):
             self.logger.info(
-                f"Restore verified: the controller's memory matches the image byte for byte, Home ID {ident2['homeId']}, "
+                f"Restore verified: the controller's memory now matches the backup byte for byte, and that backup's "
+                f"checksum was confirmed before anything was written. Home ID {ident2['homeId']}, "
                 f"{len([n for n in ident2['nodeIds'] if n != ident2['ownNodeId']])} nodes.")
             self._memory_unproven = False
             self._final_status = f"Restored {self._pretty(side.get('takenAt', ''))}, verified"
@@ -839,7 +855,8 @@ class Plugin(indigo.PluginBase):
                 extra.append(f"the {diff['tailBytes']} unwritten bytes at the end")
             note = f" (the only differences are {' and '.join(extra)})" if extra else " byte for byte"
             self.logger.info(
-                f"Restore verified: everything the image holds is in the controller{note}, Home ID {ident2['homeId']}, "
+                f"Restore verified: everything the backup holds is now in the controller{note}, and that backup's "
+                f"checksum was confirmed before anything was written. Home ID {ident2['homeId']}, "
                 f"{len([n for n in got_nodes if n != ident2['ownNodeId']])} nodes as in the image.")
             self._memory_unproven = False
             self._final_status = f"Restored {self._pretty(side.get('takenAt', ''))}, verified"

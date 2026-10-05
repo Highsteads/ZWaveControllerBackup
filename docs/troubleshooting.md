@@ -13,7 +13,7 @@ If the log goes on to say **Do not switch Z-Wave back on yet**, the stick's memo
 
 ## The Event Log says "Restore refused"
 
-The backup does not fit this stick, and nothing was written. Each line gives the reason, and the [Restoring a backup](restoring.md#why-a-restore-is-refused) page explains each one. It is safe to switch Z-Wave back on.
+The backup does not fit this stick, or the backup file has changed since it was saved, and nothing was written. Each line gives the reason, and the [Restoring a backup](restoring.md#why-a-restore-is-refused) page explains each one. It is safe to switch Z-Wave back on.
 
 ## The Event Log says the job was cancelled because Z-Wave was still on
 

@@ -6,9 +6,12 @@
 #              sidecar files and the restore guards. Never imports indigo. Any
 #              object with read() and write() is a port, so everything here runs
 #              under tests against a scripted stick.
-# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5
-# Date:        14-09-2026 16:30
-# Version:     1.1.0
+# Author:      CliveS & Claude Fable 5.1; 700/800 series Autolog & Claude Opus 5;
+#              1.2.1 Claude Opus 5.5
+# Date:        05-10-2026 22:50
+# Version:     1.2.1
+#              1.2.1 a restore is refused unless the image matches the checksum its
+#              sidecar recorded, and the backup sanity checks are re-run first
 #
 # Facts this file rests on (all verified 12-09-2026 against a live Aeotec Gen5,
 # firmware 1.01, and against @zwave-js/serial 15.29.0):
@@ -63,7 +66,7 @@ import termios
 import time
 import xml.etree.ElementTree as ET
 
-VERSION = "1.1.0"
+VERSION = "1.2.1"
 
 SOF, ACK, NAK, CAN = 0x01, 0x06, 0x15, 0x18
 REQ, RES = 0x00, 0x01
@@ -912,6 +915,28 @@ def list_images(folder):
     return out
 
 
+_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
+
+
+def checksum_refusal(image, sidecar):
+    """None if the image is byte for byte the one the sidecar describes, else the reason why not.
+    Every released version (1.0.0 onwards) has written checks.sha256 into the sidecar, so a missing
+    or malformed one means the sidecar was edited or did not come from this plugin; without it
+    there is no way to tell whether the image is still the one that was saved."""
+    recorded = ((sidecar or {}).get("checks") or {}).get("sha256")
+    if not isinstance(recorded, str) or not _SHA256_HEX.fullmatch(recorded):
+        return ("its sidecar file holds no usable checksum, so there is no way to tell whether the image is "
+                "still the one that was saved. Every backup this plugin takes records one, so the sidecar has "
+                "been edited or did not come from this plugin; restore another backup, or ask on the Indigo "
+                "forum thread before going further")
+    actual = hashlib.sha256(image).hexdigest()
+    if actual != recorded.lower():
+        return (f"the image file does not match the checksum recorded when it was saved "
+                f"(recorded {recorded.lower()[:12]}, now {actual[:12]}), so it has changed or been damaged "
+                f"since; restore another backup")
+    return None
+
+
 def restore_refusals(image, sidecar, identity, nvm, replacement_ok=False):
     """Every reason NOT to write this image onto this controller. Empty = go."""
     reasons = []
@@ -919,6 +944,17 @@ def restore_refusals(image, sidecar, identity, nvm, replacement_ok=False):
     if not ident_img:
         reasons.append("the image has no sidecar file describing which controller it came from")
         return reasons
+    bad_sum = checksum_refusal(image, sidecar)
+    if bad_sum:
+        reasons.append(bad_sum)
+    else:
+        # The same sanity checks a backup must pass before it is saved. The size is judged against
+        # the image itself here, because its fit to this controller is checked just below.
+        try:
+            _checks, problems = image_checks(image, len(image), ident_img.get("homeId"))
+        except ValueError:
+            problems = [f"the sidecar gives the Home ID as '{ident_img.get('homeId')}', which is not a Home ID"]
+        reasons.extend(problems)
     if len(image) != nvm["sizeBytes"]:
         reasons.append(f"the image is {len(image)} bytes but this controller's memory is {nvm['sizeBytes']} bytes")
     img_model = (ident_img.get("manufacturerId"), ident_img.get("productType"), ident_img.get("productId"))

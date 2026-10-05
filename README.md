@@ -2,7 +2,7 @@
 
 **Back up the memory of your Z-Wave USB stick from inside Indigo, and put it back if the stick ever loses your network.**
 
-**Version:** 1.2.0 | **Author:** CliveS, Autolog & Claude | **Needs:** Indigo 2025.2 or later, and a Z-Wave USB stick plugged into the Indigo Mac
+**Version:** 1.2.1 | **Author:** CliveS, Autolog & Claude | **Needs:** Indigo 2025.2 or later, and a Z-Wave USB stick plugged into the Indigo Mac
 
 **[Read the full guide](https://highsteads.github.io/ZWaveControllerBackup/)** — setting up, backing up, restoring, what everything means, and what to do when something goes wrong.
 
@@ -41,6 +41,8 @@ I have run it on my own Aeotec Gen5 with thirty devices, and Autolog on a Zooz Z
 Take a fresh backup whenever you add or remove a device. Before you ever restore, read the [restoring page](https://highsteads.github.io/ZWaveControllerBackup/restoring.html) of the guide all the way through.
 
 ## What's new
+
+**v1.2.1** — A restore now refuses a backup file that no longer matches the checksum recorded when it was saved, so a damaged file can never reach the stick, and **Restore verified** says that checksum was confirmed. If something went wrong as the plugin opened the stick, it now lets go of the port instead of keeping it from Indigo.
 
 **v1.2.0** — When a restore does not hold, the plugin now tells you to leave Z-Wave off and stops there, instead of also asking you to switch it back on. The device shows **Action required: run Restore again**, and you can run the restore again straight away.
 
